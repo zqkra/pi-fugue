@@ -7,6 +7,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EXT="$ROOT/src/index.ts"
+# Hermetic: an installed Fugue in the owner's settings would conflict with this worktree.
+SUBAGENTS_EXT="${PI_SUBAGENTS_EXT:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-subagents/index.js}"
+[ -f "$SUBAGENTS_EXT" ] || { echo "pi-subagents not found at $SUBAGENTS_EXT; set PI_SUBAGENTS_EXT" >&2; exit 1; }
 MODEL="${FUGUE_E2E_MODEL:-opencode-go/deepseek-v4.1-flash}"
 CHILD_MODEL="opencode-go/deepseek-v4.1-flash:low"
 WORK="$(mktemp -d /tmp/fugue-core-e2e-XXXXXX)"
@@ -18,7 +21,7 @@ trap cleanup EXIT
 run_turn() {
 	local out="$1"
 	shift
-	timeout 300 pi -p "$@" -e "$EXT" --model "$MODEL" --approve < /dev/null > "$out" 2> "$out.err" || {
+	timeout 300 pi -ne -p "$@" -e "$SUBAGENTS_EXT" -e "$EXT" --model "$MODEL" --approve < /dev/null > "$out" 2> "$out.err" || {
 		echo "FAIL: pi exited non-zero; stderr:"
 		cat "$out.err"
 		exit 1
@@ -38,7 +41,7 @@ run_turn_until() {
 	fi
 }
 
-spawn_prompt='Call the riff_spawn tool exactly once with these arguments: {"voices":[{"name":"probe","role":"scout","task":"Reply with exactly the word: pong. Do not use tools.","model":"'"$CHILD_MODEL"'"}]}. After the tool returns, reply with the exact tool result text and nothing else.'
+spawn_prompt='Call the riff_spawn tool exactly once with these arguments: {"riffs":[{"name":"probe","role":"scout","task":"Reply with exactly the word: pong. Do not use tools.","model":"'"$CHILD_MODEL"'"}]}. After the tool returns, reply with the exact tool result text and nothing else.'
 status_prompt='Call the riff_status tool with no arguments. Reply with the exact tool result text and nothing else.'
 
 check_lane() {

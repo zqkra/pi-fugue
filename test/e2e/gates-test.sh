@@ -24,7 +24,7 @@ echo "== gates test in $TMP"
 (
 	cd "$TMP"
 	env FUGUE_E2E_HOLD_MS=0 \
-		pi -p "Call the fugue_gate tool with no arguments now. Do not explain, just call it." \
+		pi -ne -p "Call the fugue_gate tool with no arguments now. Do not explain, just call it." \
 		--session-dir "$TMP/sessions" --model "$CONDUCTOR_MODEL" --thinking low \
 		--no-builtin-tools --tools fugue_gate \
 		-e "$HARNESS" < /dev/null > "$TMP/run.out" 2> "$TMP/run.err"
