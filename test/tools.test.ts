@@ -1,11 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import type { ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { laneMode, createVoiceTools } from "../src/tools.ts";
 import { Store, type BridgeLike } from "../src/store.ts";
 import type { VoiceEntry } from "../src/store.ts";
 
-const ctx = {} as ExtensionToolContext;
+/** No repo here, so an isolated worker falls back cleanly instead of creating worktrees. */
+const ctx = { cwd: join(tmpdir(), "fugue-tools-no-repo") } as ExtensionToolContext;
 
 interface RecordedRequest {
 	method: string;
@@ -61,6 +67,32 @@ function text(result: { content: unknown[] }): string {
 		if (candidate.type === "text" && typeof candidate.text === "string") return candidate.text;
 	}
 	return "";
+}
+
+function git(cwd: string, ...args: string[]): string {
+	return execFileSync("git", args, { cwd, encoding: "utf8" });
+}
+
+function gitTry(cwd: string, ...args: string[]): { status: number | null } {
+	return { status: spawnSync("git", args, { cwd, encoding: "utf8" }).status };
+}
+
+/** Temp repo as `<parent>/repo`, so worktrees land in a private `<parent>/.fugue-worktrees`. */
+async function withRepo(run: (repo: string) => Promise<void>): Promise<void> {
+	const parent = await mkdtemp(join(tmpdir(), "fugue-tools-repo-"));
+	const repo = join(parent, "repo");
+	await mkdir(repo);
+	git(repo, "init", "-q", "-b", "main");
+	git(repo, "config", "user.email", "test@example.com");
+	git(repo, "config", "user.name", "Test");
+	await writeFile(join(repo, "app.txt"), "one\n");
+	git(repo, "add", "app.txt");
+	git(repo, "commit", "-qm", "base");
+	try {
+		await run(repo);
+	} finally {
+		await rm(parent, { recursive: true, force: true });
+	}
 }
 
 test("laneMode maps roles to pi-subagents lane modes", () => {
@@ -205,4 +237,117 @@ test("riff_stop stops a voice and renderers stay one line", async () => {
 	);
 	assert.deepEqual(resultLine?.render(120), ["2 riffs started"]);
 	store.dispose();
+});
+
+test("worker riffs are isolated by default; scout is not; isolate:false overrides", async () => {
+	await withRepo(async (repo) => {
+		const { store, bridge } = makeDeps();
+		const spawn = tool("riff_spawn", { store, bridge });
+		const repoCtx = { cwd: repo } as ExtensionToolContext;
+		const result = await spawn.execute("call-1", { riffs: [{ name: "auth", role: "worker", task: "implement" }] }, undefined, undefined, repoCtx);
+		const auth = store.voiceByName("auth");
+		assert.equal(auth?.worktree?.branch, "fugue/auth");
+		assert.equal(auth?.worktree?.repoRoot, repo);
+		assert.ok(auth?.worktree && existsSync(auth.worktree.path));
+		const spawnRequest = bridge.requests.find((entry) => entry.method === "spawn");
+		assert.equal(spawnRequest?.params.cwd, auth?.worktree?.path);
+		assert.match(String(spawnRequest?.params.task), /isolated git worktree/);
+		assert.doesNotMatch(text(result), /not isolated/);
+
+		await spawn.execute("call-2", { riffs: [{ name: "db", role: "scout", task: "look" }] }, undefined, undefined, repoCtx);
+		assert.equal(store.voiceByName("db")?.worktree, undefined);
+
+		await spawn.execute("call-3", { riffs: [{ name: "fix", role: "worker", task: "x", isolate: false }] }, undefined, undefined, repoCtx);
+		assert.equal(store.voiceByName("fix")?.worktree, undefined);
+		store.dispose();
+	});
+});
+
+test("a non-git cwd falls back to an unisolated run and says so", async () => {
+	const plain = await mkdtemp(join(tmpdir(), "fugue-tools-plain-"));
+	try {
+		const { store, bridge } = makeDeps();
+		const spawn = tool("riff_spawn", { store, bridge });
+		const result = await spawn.execute(
+			"call-1",
+			{ riffs: [{ name: "auth", role: "worker", task: "x" }] },
+			undefined,
+			undefined,
+			{ cwd: plain } as ExtensionToolContext,
+		);
+		assert.match(text(result), /not isolated: .*not inside a git repository/);
+		assert.equal(store.voiceByName("auth")?.worktree, undefined);
+		assert.equal(bridge.requests.find((entry) => entry.method === "spawn")?.params.cwd, plain);
+		store.dispose();
+	} finally {
+		await rm(plain, { recursive: true, force: true });
+	}
+});
+
+test("riff_merge refuses a running riff, then merges the settled one into the main checkout", async () => {
+	await withRepo(async (repo) => {
+		const { store, bridge } = makeDeps();
+		const spawn = tool("riff_spawn", { store, bridge });
+		const repoCtx = { cwd: repo } as ExtensionToolContext;
+		await spawn.execute("call-1", { riffs: [{ name: "auth", role: "worker", task: "x" }] }, undefined, undefined, repoCtx);
+		const worktree = store.voiceByName("auth")!.worktree!;
+		await writeFile(join(worktree.path, "feature.txt"), "from the riff\n");
+		git(worktree.path, "add", "feature.txt");
+		git(worktree.path, "commit", "-qm", "add feature");
+		const merge = tool("riff_merge", { store, bridge });
+
+		const refused = await merge.execute("call-2", { name: "auth" }, undefined, undefined, repoCtx);
+		assert.equal(refused.isError, true);
+		assert.match(text(refused), /auth is queued; wait for it to settle or riff_stop it/);
+
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: 1_000_000 });
+		const merged = await merge.execute("call-3", { name: "auth" }, undefined, undefined, repoCtx);
+		assert.equal(merged.isError, undefined);
+		assert.match(text(merged), /^merged auth: 1 commit, 1 file/);
+		assert.equal(await readFile(join(repo, "feature.txt"), "utf8"), "from the riff\n");
+		assert.ok(!existsSync(worktree.path));
+		assert.equal(store.voiceByName("auth")?.worktree?.status, "merged");
+		store.dispose();
+	});
+});
+
+test("riff_merge and riff_discard refuse an unisolated riff", async () => {
+	const { store, bridge } = makeDeps();
+	const spawn = tool("riff_spawn", { store, bridge });
+	await spawn.execute("call-1", { riffs: [{ name: "db", role: "scout", task: "x" }] }, undefined, undefined, ctx);
+	store.onAsyncComplete({ runId: "run-1", state: "complete", success: true });
+	const merge = tool("riff_merge", { store, bridge });
+	const merged = await merge.execute("call-2", { name: "db" }, undefined, undefined, ctx);
+	assert.equal(merged.isError, true);
+	assert.equal(text(merged), "db has no worktree");
+	const discard = tool("riff_discard", { store, bridge });
+	const discarded = await discard.execute("call-3", { name: "db" }, undefined, undefined, ctx);
+	assert.equal(discarded.isError, true);
+	assert.equal(text(discarded), "db has no worktree");
+	store.dispose();
+});
+
+test("riff_discard refuses a running riff, then removes the folder and keeps the branch", async () => {
+	await withRepo(async (repo) => {
+		const { store, bridge } = makeDeps();
+		const spawn = tool("riff_spawn", { store, bridge });
+		const repoCtx = { cwd: repo } as ExtensionToolContext;
+		await spawn.execute("call-1", { riffs: [{ name: "auth", role: "worker", task: "x" }] }, undefined, undefined, repoCtx);
+		const worktree = store.voiceByName("auth")!.worktree!;
+		const discard = tool("riff_discard", { store, bridge });
+
+		const refused = await discard.execute("call-2", { name: "auth" }, undefined, undefined, repoCtx);
+		assert.equal(refused.isError, true);
+		assert.match(text(refused), /auth is queued; riff_stop it first/);
+
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: 1_000_000 });
+		const discarded = await discard.execute("call-3", { name: "auth" }, undefined, undefined, repoCtx);
+		assert.match(text(discarded), /^discarded auth, branch fugue\/auth kept/);
+		assert.ok(!existsSync(worktree.path));
+		assert.equal(gitTry(repo, "rev-parse", "--verify", "--quiet", "refs/heads/fugue/auth").status, 0);
+		assert.equal(store.voiceByName("auth")?.worktree?.status, "discarded");
+		const again = await discard.execute("call-4", { name: "auth" }, undefined, undefined, repoCtx);
+		assert.equal(text(again), "already discarded: auth");
+		store.dispose();
+	});
 });
