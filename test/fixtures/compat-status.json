@@ -1,0 +1,26 @@
+{
+	"lifecycleArtifactVersion": 3,
+	"runId": "run-fixture",
+	"state": "complete",
+	"pid": 12345,
+	"cwd": "/work",
+	"startedAt": 1700000000000,
+	"lastUpdate": 1700000006000,
+	"endedAt": 1700000006000,
+	"lane": { "version": 1, "key": "probe", "mode": "scout" },
+	"steps": [
+		{
+			"index": 0,
+			"agent": "scout",
+			"status": "complete",
+			"model": "opencode-go/deepseek-v4.1-flash:low",
+			"startedAt": 1700000000000,
+			"endedAt": 1700000006000,
+			"tokens": { "input": 2848, "output": 528, "total": 3376, "window": 2848 },
+			"contextLimit": 1000000,
+			"toolCount": 3,
+			"recentTools": [{ "tool": "read", "args": "src/db.ts", "endMs": 1700000004000 }],
+			"lane": { "version": 1, "key": "probe", "mode": "scout" }
+		}
+	]
+}

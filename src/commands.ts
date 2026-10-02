@@ -8,6 +8,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { checkCompatibility, piSubagentsVersion } from "./compat.ts";
 import { ownerIds } from "./owners.ts";
 import { tempRoot } from "./paths.ts";
 import type { BridgeLike, Store } from "./store.ts";
@@ -45,6 +46,13 @@ async function doctorReport(deps: CommandDeps): Promise<string> {
 	const lines = ["fugue doctor"];
 	const version = await readJson(join(getAgentDir(), "pi-subagents", "last-seen-version.json"));
 	lines.push(`pi-subagents: ${typeof version?.version === "string" ? version.version : "unknown"}`);
+	const compat = await checkCompatibility(deps.bridge, tempRoot());
+	if (compat.ok) {
+		lines.push(`compat: ok (pi-subagents ${(await piSubagentsVersion()) ?? "unknown"})`);
+	} else {
+		lines.push(`compat: ${compat.problems.length} problem${compat.problems.length === 1 ? "" : "s"} (pi-subagents ${(await piSubagentsVersion()) ?? "unknown"})`);
+		for (const problem of compat.problems) lines.push(`- ${problem}`);
+	}
 	try {
 		const ping = await deps.bridge.request<{ methods?: unknown }>("ping", {});
 		const methods = Array.isArray(ping?.methods) ? ping.methods.join(",") : "?";

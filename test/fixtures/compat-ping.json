@@ -1,0 +1,13 @@
+{
+	"version": 1,
+	"methods": ["ping", "status", "manage", "spawn", "steer", "interrupt", "stop", "resume", "cost"],
+	"capabilities": {
+		"status": true,
+		"asyncSpawn": true,
+		"steer": true,
+		"nonRecoveringSteer": true,
+		"interrupt": true,
+		"stop": true,
+		"resume": true
+	}
+}
