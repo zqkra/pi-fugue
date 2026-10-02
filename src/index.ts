@@ -67,14 +67,16 @@ export default function (pi: ExtensionAPI) {
 				if (!worktree || worktree.status !== "active") return;
 				// Commits whatever the riff left uncommitted so nothing is lost; fire-and-forget
 				// is safe because the hook itself never rejects.
-				void commitSettledWork(worktree, voice.name, voice.state).then((result) => {
-					if (result.warning) console.error(`[fugue] ${voice.name} worktree: ${result.warning}`);
-				});
+				void commitSettledWork(worktree, voice.name, voice.state)
+					.then((result) => {
+						if (result.warning) console.error(`[fugue] ${voice.name} worktree: ${result.warning}`);
+					})
+					.catch(() => {});
 			},
 		});
 		store.hydrate(collectVoiceEntries(ctx));
 		session = { store, score: mountScore(pi, ctx, store, store), notices: startNotices(pi, ctx, store) };
-		void pruneVanishedWorktrees(store.snapshot().voices);
+		void pruneVanishedWorktrees(store.snapshot().voices).catch(() => {});
 		eventOffs = [
 			pi.events.on("subagent:async-started", (event) => {
 				recordOwner((event as AsyncStartedPayload | undefined)?.completionOwnerId);
