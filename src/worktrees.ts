@@ -301,7 +301,7 @@ export async function commitSettledWork(worktree: RiffWorktree, name: string, st
 		if (worktree.status !== "active" || !(await pathExists(worktree.path))) return { committed: false };
 		const warnings: string[] = [];
 		const copy = await copyEntriesFor(worktree.repoRoot, warnings);
-		const excludes = copy.map((entry) => `:(exclude)${entry}`);
+		const excludes = copy.map((entry) => `:(exclude,literal)${entry}`);
 		const add = await runGit(worktree.path, ["add", "-A", "--", ".", ...excludes]);
 		if (add.code !== 0) return { committed: false, warning: `could not stage work: ${firstLine(add.stderr) || `exit ${add.code}`}` };
 		const staged = await runGit(worktree.path, ["diff", "--cached", "--quiet"]);

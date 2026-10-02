@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Worktree E2E: a real Pi conductor runs in a temp repo that has an uncommitted
 # change in the main checkout. It spawns a worker riff, which edits a file and
-# commits inside its own fugue/auth worktree. After the riff settles, riff_merge
+# commits inside its own fugue/auth worktree. When the riff settles, riff_merge
 # brings the change into the main checkout, the owner's uncommitted change is
-# still there, and the worktree folder and branch are gone.
+# still there, and the worktree folder and branch are gone. A resumed session
+# then reports the worktree as merged.
+#
+# The conductor sometimes acts on the completion notice inside the spawn run and
+# sometimes not; both paths are accepted and asserted on the final state.
 #
 #   bash test/e2e/worktree-e2e.sh
 set -euo pipefail
@@ -12,6 +16,11 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 EXT="$ROOT/src/index.ts"
 MODEL="${FUGUE_E2E_MODEL:-opencode-go/deepseek-v4.1-flash}"
 CHILD_MODEL="opencode-go/deepseek-v4.1-flash:low"
+# The owner may have Fugue installed from another checkout; -ne keeps that copy
+# out so this worktree's extension is the one under test. pi-subagents is loaded
+# explicitly in its place.
+PI_SUBAGENTS_EXT="${PI_SUBAGENTS_EXT:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-subagents/index.js}"
+[ -f "$PI_SUBAGENTS_EXT" ] || { echo "pi-subagents not found at $PI_SUBAGENTS_EXT"; exit 1; }
 WORK="$(mktemp -d /tmp/fugue-worktree-e2e-XXXXXX)"
 export PI_SUBAGENTS_TEMP_ROOT="$WORK/pi-subagents"
 
@@ -21,10 +30,10 @@ trap cleanup EXIT
 run_turn() {
 	local cwd="$1" out="$2"
 	shift 2
-	(cd "$cwd" && timeout 300 pi -p "$@" -e "$EXT" --model "$MODEL" --approve < /dev/null > "$out" 2> "$out.err")
+	(cd "$cwd" && timeout 300 pi -p "$@" -ne -e "$PI_SUBAGENTS_EXT" -e "$EXT" --model "$MODEL" --approve < /dev/null > "$out" 2> "$out.err")
 }
 
-# Wait until the auth run's status.json reports a terminal state.
+# Wait until the auth run's status.json reports the wanted state.
 wait_for_state() {
 	local wanted="$1" state
 	for _ in $(seq 1 120); do
@@ -67,34 +76,40 @@ scenario() {
 
 	echo "== attempt $n: turn 1, spawn worker auth ($CHILD_MODEL) in $repo =="
 	run_turn "$repo" "$WORK/turn1-$n.out" --session-id "fugue-worktree-e2e-$n" --session-dir "$sessions" "$spawn_prompt" || {
-		echo "pi turn 1 exited non-zero:"; cat "$WORK/turn1-$n.err"; return 1
+		echo "pi turn 1 exited non-zero:"; cat "$WORK/turn1-$n.out.err"; return 1
 	}
 	local session_file
-	session_file="$(find "$sessions" -name "*.jsonl" | head -1)"
+	session_file="$(find "$sessions" -maxdepth 1 -name "*.jsonl" | head -1)"
 	[ -n "$session_file" ] || { echo "no session file"; return 1; }
-	[ -d "$worktree" ] || { echo "no worktree at $worktree; turn 1 answer:"; cat "$WORK/turn1-$n.out"; return 1; }
-	git -C "$worktree" rev-parse --verify refs/heads/fugue/auth > /dev/null || { echo "branch fugue/auth missing"; return 1; }
-	echo "PASS worktree $worktree on branch fugue/auth exists"
 
-	wait_for_state complete || { echo "auth never completed"; return 1; }
-	local commits
-	commits="$(git -C "$worktree" rev-list --count main..HEAD)"
-	[ "$commits" -ge 1 ] || { echo "worktree branch has no commit; child output:"; tail -5 "$WORK/turn1-$n.out"; return 1; }
-	git -C "$worktree" show "HEAD:feature.txt" | grep -q "from the riff" || { echo "feature.txt not committed in the worktree"; return 1; }
-	echo "PASS child settled complete and committed $commits commit(s) on fugue/auth"
-	[ ! -e "$repo/feature.txt" ] || { echo "feature.txt leaked into the main checkout"; return 1; }
-	echo "PASS main checkout untouched before merge (feature.txt only in the worktree)"
+	if [ ! -d "$worktree" ] && git -C "$repo" show HEAD:feature.txt 2>/dev/null | grep -q "from the riff"; then
+		echo "PASS conductor spawned the riff and merged it in the spawn session"
+	else
+		[ -d "$worktree" ] || { echo "no worktree at $worktree and nothing merged; turn 1 answer:"; cat "$WORK/turn1-$n.out"; return 1; }
+		git -C "$worktree" rev-parse --verify refs/heads/fugue/auth > /dev/null || { echo "branch fugue/auth missing"; return 1; }
+		echo "PASS worktree $worktree on branch fugue/auth exists"
 
-	echo "== attempt $n: turn 2, riff_merge auth in the same session =="
-	run_turn "$repo" "$WORK/turn2-$n.out" --session "$session_file" "$merge_prompt" || {
-		echo "pi turn 2 exited non-zero:"; cat "$WORK/turn2-$n.err"; return 1
-	}
-	grep -q "merged auth:" "$WORK/turn2-$n.out" || { echo "merge did not report success:"; cat "$WORK/turn2-$n.out"; return 1; }
-	echo "PASS $(grep -o 'merged auth:.*' "$WORK/turn2-$n.out" | head -1)"
+		wait_for_state complete || { echo "auth never completed"; return 1; }
+		local commits
+		commits="$(git -C "$worktree" rev-list --count main..HEAD)"
+		[ "$commits" -ge 1 ] || { echo "worktree branch has no commit; turn 1 answer:"; tail -5 "$WORK/turn1-$n.out"; return 1; }
+		git -C "$worktree" show "HEAD:feature.txt" | grep -q "from the riff" || { echo "feature.txt not committed in the worktree"; return 1; }
+		echo "PASS child settled complete and committed $commits commit(s) on fugue/auth"
+		[ ! -e "$repo/feature.txt" ] || { echo "feature.txt leaked into the main checkout"; return 1; }
+		echo "PASS main checkout untouched before merge (feature.txt only in the worktree)"
+
+		echo "== attempt $n: turn 2, riff_merge auth in the same session =="
+		run_turn "$repo" "$WORK/turn2-$n.out" --session "$session_file" "$merge_prompt" || {
+			echo "pi turn 2 exited non-zero:"; cat "$WORK/turn2-$n.out.err"; return 1
+		}
+		[ ! -d "$worktree" ] && git -C "$repo" show HEAD:feature.txt 2>/dev/null | grep -q "from the riff" || {
+			echo "riff_merge did not land the work:"; cat "$WORK/turn2-$n.out"; return 1
+		}
+	fi
 
 	grep -q "from the riff" "$repo/feature.txt" || { echo "merged feature.txt missing in the main checkout"; return 1; }
 	git -C "$repo" show HEAD:feature.txt | grep -q "from the riff" || { echo "feature.txt is not in the main HEAD"; return 1; }
-	echo "PASS feature.txt merged into the main checkout"
+	echo "PASS feature.txt merged into the main checkout at $(git -C "$repo" log -1 --format=%s)"
 
 	git -C "$repo" diff --name-only | grep -qx owner.txt || { echo "owner's uncommitted change is gone"; return 1; }
 	grep -q "owner local edit" "$repo/owner.txt" || { echo "owner.txt lost its local edit"; return 1; }
@@ -103,6 +118,21 @@ scenario() {
 	[ ! -d "$worktree" ] || { echo "worktree folder still exists"; return 1; }
 	git -C "$repo" rev-parse --verify --quiet refs/heads/fugue/auth > /dev/null && { echo "branch fugue/auth still exists"; return 1; }
 	echo "PASS worktree folder and branch are gone"
+
+	echo "== attempt $n: turn 3, resumed session hydrates the worktree =="
+	local hydrated=""
+	for _ in 1 2; do
+		run_turn "$repo" "$WORK/turn3-$n.out" --session "$session_file" 'Call the riff_status tool with name "auth" and reply with the exact tool result text and nothing else.' || {
+			echo "pi turn 3 exited non-zero:"; cat "$WORK/turn3-$n.out.err"; return 1
+		}
+		if grep -q "branch: fugue/auth" "$WORK/turn3-$n.out" && grep -q "(merged)" "$WORK/turn3-$n.out"; then
+			hydrated=1
+			break
+		fi
+		echo "note: turn 3 answer did not name the merged worktree; retrying"
+	done
+	[ -n "$hydrated" ] || { echo "resumed riff_status lost the merged worktree:"; cat "$WORK/turn3-$n.out"; return 1; }
+	echo "PASS resumed session reports $(grep -ho 'branch:.*' "$WORK/turn3-$n.out" | head -1)"
 
 	python3 - "$session_file" <<'PY'
 import json, sys
@@ -119,6 +149,7 @@ assert auth, "no fugue.voice entry for auth"
 worktrees = [entry.get("worktree") for entry in auth if entry.get("worktree")]
 assert worktrees, "fugue.voice entry has no worktree"
 assert worktrees[0].get("branch") == "fugue/auth", worktrees[0]
+assert worktrees[0].get("status") == "active", worktrees[0]
 assert worktrees[-1].get("status") == "merged", worktrees[-1]
 assert any(entry.get("state") == "done" for entry in auth), [entry.get("state") for entry in auth]
 print(f"PASS session persisted worktree {worktrees[0]['branch']} active then {worktrees[-1]['status']}")
