@@ -14,8 +14,8 @@ import {
 } from "./names.ts";
 import {
 	applyVoiceFields,
+	mapState,
 	readOutputTail,
-	readPendingQuestion,
 	readSupervisorRequest,
 	readStatusFile,
 	readVoiceFields,
@@ -495,6 +495,7 @@ export class Store implements RosterView, ScoreActions {
 		if (this.voices.get(runId) !== record) return;
 		const before = record.voice;
 		if (snapshot) this.applyStatus(record, snapshot);
+		await this.resolveQuestion(record, snapshot);
 		this.checkLiveness(record);
 		if (snapshot || record.voice !== before) {
 			this.ensurePolling();
@@ -525,23 +526,52 @@ export class Store implements RosterView, ScoreActions {
 			record.settledFromEvent = true;
 			this.persist(record.voice);
 		}
-		if (fields.activityState === "needs_attention" && !record.voice.question) {
-			void this.recoverQuestion(record, snapshot.asyncDir);
+	}
+
+	/**
+	 * A blocked voice waits on its open `contact_supervisor` request, and that request
+	 * file is the truth: pi-subagents deletes it the moment the conductor answers, on
+	 * any channel, while `status.json` can keep the old `needs_attention` for a while.
+	 * So every refresh of a blocked voice checks the request — not only the refreshes
+	 * that saw a new status file — and an answered one stops being blocked.
+	 */
+	private async resolveQuestion(record: VoiceRecord, snapshot: StatusSnapshot | undefined): Promise<void> {
+		if (!record.voice.question && record.voice.state !== "blocked") return;
+		const runId = record.voice.runId;
+		const request = await readSupervisorRequest(this.options.tempRoot, runId);
+		if (this.disposed || this.voices.get(runId) !== record) return;
+		if (request) {
+			this.block(record, request);
+			return;
+		}
+		// Answered: with no open request there is no question, and the stale
+		// `needs_attention` must not keep the voice blocked. Its state is the one
+		// status.json reports on its own — or running, with no status left to read.
+		const status = snapshot ?? (record.voice.asyncDir ? await readStatusFile(record.voice.asyncDir) : undefined);
+		if (this.disposed || this.voices.get(runId) !== record) return;
+		if (!record.voice.question && record.voice.state !== "blocked") return;
+		const answered = record.voice.question;
+		record.voice = {
+			...record.voice,
+			state: status ? mapState(status.status.state) : "running",
+			activity: undefined,
+			question: undefined,
+		};
+		if (answered) {
+			this.addEdge({ from: "conductor", to: runId, kind: "answered", at: this.now(), text: truncate(answered.message, EDGE_TEXT_CHARS) });
 		}
 	}
 
-	private async recoverQuestion(record: VoiceRecord, asyncDir: string): Promise<void> {
-		const fallback = await readPendingQuestion(asyncDir);
-		if (!fallback || record.voice.question) return;
-		await this.markBlocked(record, fallback);
-	}
-
-	/** A voice asked the conductor: show its real question from the open request, not the generic notice. */
+	/** A voice asked the conductor: block it with its real question from the open request, not the generic notice. */
 	private async markBlocked(record: VoiceRecord, fallback: PendingQuestion): Promise<void> {
 		const request = await readSupervisorRequest(this.options.tempRoot, record.voice.runId);
-		if (this.disposed || this.voices.get(record.voice.runId) !== record || TERMINAL_STATES.has(record.voice.state)) return;
-		const question = request ?? fallback;
-		if (record.voice.question?.message === question.message) return;
+		if (this.disposed || this.voices.get(record.voice.runId) !== record) return;
+		this.block(record, request ?? fallback);
+	}
+
+	/** Show the question and record the `asked` edge; a settled voice is never re-blocked. */
+	private block(record: VoiceRecord, question: PendingQuestion): void {
+		if (TERMINAL_STATES.has(record.voice.state) || record.voice.question?.message === question.message) return;
 		record.voice = { ...record.voice, state: "blocked", activity: undefined, question };
 		this.addEdge({ from: record.voice.runId, to: "conductor", kind: "asked", at: question.at, text: truncate(question.message, EDGE_TEXT_CHARS) });
 		this.publish();

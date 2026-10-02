@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { Store, type BridgeLike, type VoiceEntry } from "../src/store.ts";
 import type { StatusFile } from "../src/status-files.ts";
 import type { GateReport, RiffWorktree, Voice } from "../src/types.ts";
+import { layoutScoreLine } from "../src/ui/score-line.ts";
+import { darkTheme, stripAnsi } from "./helpers.ts";
 
 const NOW = 1_000_000;
 
@@ -61,6 +63,23 @@ function runningStatus(overrides: Partial<StatusFile> = {}): StatusFile {
 		steps: [{ agent: "worker", status: "running", currentTool: "read", currentPath: "/work/src/db.ts", tokens: { input: 10, output: 5, total: 15 } }],
 		...overrides,
 	};
+}
+
+/**
+ * A `contact_supervisor` ask as pi-subagents leaves it: the open request file, the
+ * control record in events.jsonl (which keeps the question after the answer), and
+ * `status.json` (pass `activityState: "needs_attention"` to runningStatus).
+ */
+async function writePendingAsk(root: string, runId: string, agent: string, asyncDir: string, message: string): Promise<string> {
+	const requests = join(root, "supervisor-channels", `${runId}-${agent}-0`, "requests");
+	await mkdir(requests, { recursive: true });
+	const request = join(requests, "q1.json");
+	await writeFile(request, JSON.stringify({ id: "q1", message, createdAt: NOW }));
+	await writeFile(
+		join(asyncDir, "events.jsonl"),
+		`${JSON.stringify({ type: "subagent.control", event: { type: "needs_attention", reason: "supervisor_request", message, toolCallId: "q1", ts: NOW, runId } })}\n`,
+	);
+	return request;
 }
 
 test("snapshots are immutable, versions bump, and subscribers notify once per batch", async () => {
@@ -281,6 +300,101 @@ test("a supervisor request blocks the voice, records an edge, and clears on runn
 		await store.refreshAll();
 		assert.equal(store.voice("run-1")?.state, "running");
 		assert.equal(store.voice("run-1")?.question, undefined);
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("a supervisor request answered on another channel unblocks the voice while status.json still says needs_attention", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const { store } = makeStore(root);
+		const asyncDir = await writeStatus(root, "run-1", runningStatus({ activityState: "needs_attention" }));
+		const request = await writePendingAsk(root, "run-1", "scout", asyncDir, "Postgres or SQLite?");
+		store.registerVoice({ runId: "run-1", name: "db", role: "scout", origin: "fugue", asyncDir });
+		store.onControlEvent({
+			event: { type: "needs_attention", reason: "supervisor_request", message: "db is waiting for a supervisor reply", toolCallId: "q1", ts: NOW, runId: "run-1" },
+		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(store.voice("run-1")?.state, "blocked");
+		assert.equal(store.voice("run-1")?.question?.message, "Postgres or SQLite?");
+		const blockedLine = stripAnsi(layoutScoreLine(store.snapshot(), { width: 200, now: NOW, theme: darkTheme() })[0] ?? "");
+		assert.ok(blockedLine.includes("asks"), blockedLine);
+
+		// pi-subagents answered it: the request file is gone, status.json is untouched.
+		await rm(request);
+		await store.refreshAll();
+		assert.equal(store.voice("run-1")?.state, "running");
+		assert.equal(store.voice("run-1")?.question, undefined);
+		assert.deepEqual(
+			store.snapshot().edges.map((edge) => [edge.from, edge.to, edge.kind]),
+			[["run-1", "conductor", "asked"], ["conductor", "run-1", "answered"]],
+		);
+		const answeredLine = stripAnsi(layoutScoreLine(store.snapshot(), { width: 200, now: NOW, theme: darkTheme() })[0] ?? "");
+		assert.ok(!answeredLine.includes("asks"), answeredLine);
+
+		// The stale needs_attention comes back with the riff's next status write: still not blocked.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await writeStatus(root, "run-1", runningStatus({ activityState: "needs_attention", lastUpdate: NOW - 400 }));
+		await store.refreshAll();
+		assert.equal(store.voice("run-1")?.state, "running");
+		assert.equal(store.voice("run-1")?.question, undefined);
+		assert.deepEqual(store.snapshot().edges.map((edge) => edge.kind), ["asked", "answered"]);
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("an open supervisor request keeps the voice blocked on every refresh", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const { store } = makeStore(root);
+		// A session restart: no control event, the status file and the open request are all there is.
+		const asyncDir = await writeStatus(root, "run-1", runningStatus({ activityState: "needs_attention" }));
+		await writePendingAsk(root, "run-1", "scout", asyncDir, "Postgres or SQLite?");
+		store.registerVoice({ runId: "run-1", name: "db", role: "scout", origin: "fugue", asyncDir });
+		await store.refreshAll();
+		// The ask is shown by the refresh or right after it; either way it must stick.
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(store.voice("run-1")?.state, "blocked");
+		assert.equal(store.voice("run-1")?.question?.message, "Postgres or SQLite?");
+		// An unchanged status file and a rewritten one that still says needs_attention: both keep it blocked.
+		await store.refreshAll();
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await writeStatus(root, "run-1", runningStatus({ activityState: "needs_attention", lastUpdate: NOW - 400 }));
+		await store.refreshAll();
+		assert.equal(store.voice("run-1")?.state, "blocked");
+		assert.equal(store.voice("run-1")?.question?.message, "Postgres or SQLite?");
+		assert.deepEqual(store.snapshot().edges.map((edge) => edge.kind), ["asked"]);
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("riff_tell steers a blocked voice and the status refresh clears its question", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const { store, bridge } = makeStore(root);
+		const asyncDir = await writeStatus(root, "run-1", runningStatus({ activityState: "needs_attention" }));
+		await writePendingAsk(root, "run-1", "scout", asyncDir, "Postgres or SQLite?");
+		store.registerVoice({ runId: "run-1", name: "db", role: "scout", origin: "fugue", asyncDir });
+		await store.refreshAll();
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		assert.equal(store.voice("run-1")?.state, "blocked");
+		assert.equal(store.voice("run-1")?.question?.message, "Postgres or SQLite?");
+		assert.equal(await store.tell("run-1", "Use Postgres", "follow_up"), "told db");
+		assert.equal(bridge.requests.at(-1)?.method, "steer");
+		assert.deepEqual(bridge.requests.at(-1)?.params, { runId: "run-1", message: "Use Postgres", mode: "follow_up" });
+		// The riff picks the answer up: its status stops saying needs_attention.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		await writeStatus(root, "run-1", runningStatus({ lastUpdate: NOW - 400 }));
+		await store.refreshAll();
+		assert.equal(store.voice("run-1")?.state, "running");
+		assert.equal(store.voice("run-1")?.question, undefined);
+		assert.deepEqual(store.snapshot().edges.map((edge) => edge.kind), ["asked", "told"]);
 		store.dispose();
 	} finally {
 		await rm(root, { recursive: true, force: true });

@@ -78,15 +78,18 @@ mode: laneMode(role)}}`, where `laneMode` maps worker/delegate to `mutation`, re
   `subagent:control-event` (`reason:"supervisor_request"` means blocked with a question; capture the message),
   `subagent:process-terminal`.
 - Polling: while at least one voice is non-terminal, every 1000 ms `stat` each active voice's `status.json` and
-  re-read only when `mtimeMs` changed. Stop the timer when nothing is active (zero idle CPU). `timer.unref()`.
+  re-read only when `mtimeMs` changed. A blocked voice also re-checks its open supervisor request, which pi-subagents
+  deletes as soon as it is answered on any channel: no request means no question, so the voice is not blocked.
+  Stop the timer when nothing is active (zero idle CPU). `timer.unref()`.
 - Mapping from `status.json`: state `queued`->queued, `running`->running, `paused`->paused, `complete`->done,
   `failed|partial|rejected`->failed, `stopped`->stopped. `steps[0]`: `model`, `thinking`, `tokens`,
   `totalCost.costUsd`, `startedAt`, `endedAt`, `currentTool`, `currentPath`, `currentToolArgs`, `error`.
 - Activity from `currentTool`: read/ls/cat -> reading; grep/find/glob/rg -> searching; edit/write/apply_patch ->
   writing; bash -> running (detail = first 40 chars of the command); subagent/voice_spawn -> delegating; none while
   running -> thinking. Detail for reading/writing = path relative to the run cwd.
-- Message edges: a supervisor request adds `{from: voice, to: "conductor", kind:"asked"}`; `voice_tell` adds
-  `{from:"conductor", to: voice, kind: "steered"|"told"}`. Keep the last 50 edges.
+- Message edges: a supervisor request adds `{from: voice, to: "conductor", kind:"asked"}`; the answer to it adds
+  `{from: "conductor", to: voice, kind:"answered"}`; `voice_tell` adds `{from:"conductor", to: voice,
+  kind: "steered"|"told"}`. Keep the last 50 edges.
 - Liveness: if a voice is `running` but the runner `pid` from `status.json` is gone (`process.kill(pid, 0)` throws
   `ESRCH`) and no terminal state was written within 10 s, mark it `failed` with error "runner exited".
 
