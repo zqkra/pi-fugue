@@ -24,6 +24,7 @@ import {
 import { registerVoiceTools } from "./tools.ts";
 import { bgWaitBlockReason, forceBackground } from "./free-chat.ts";
 import { mountScore, type ScoreHandle } from "./ui/index.ts";
+import { commitSettledWork, parseRiffWorktree, pruneVanishedWorktrees } from "./worktrees.ts";
 
 const VOICE_ENTRY = "fugue.voice";
 
@@ -61,9 +62,19 @@ export default function (pi: ExtensionAPI) {
 			conductor: { model: ctx.model?.id, thinking: pi.getThinkingLevel() },
 			tempRoot: tempRoot(),
 			persist: (entry) => pi.appendEntry(VOICE_ENTRY, entry),
+			onSettled: (voice) => {
+				const worktree = voice.worktree;
+				if (!worktree || worktree.status !== "active") return;
+				// Commits whatever the riff left uncommitted so nothing is lost; fire-and-forget
+				// is safe because the hook itself never rejects.
+				void commitSettledWork(worktree, voice.name, voice.state).then((result) => {
+					if (result.warning) console.error(`[fugue] ${voice.name} worktree: ${result.warning}`);
+				});
+			},
 		});
 		store.hydrate(collectVoiceEntries(ctx));
 		session = { store, score: mountScore(pi, ctx, store, store), notices: startNotices(pi, ctx, store) };
+		void pruneVanishedWorktrees(store.snapshot().voices);
 		eventOffs = [
 			pi.events.on("subagent:async-started", (event) => {
 				recordOwner((event as AsyncStartedPayload | undefined)?.completionOwnerId);
@@ -74,7 +85,8 @@ export default function (pi: ExtensionAPI) {
 			pi.events.on("subagent:control-event", (event) => store.onControlEvent(event as ControlEventPayload)),
 			pi.events.on("subagent:process-terminal", (event) => store.onProcessTerminal(event as ProcessTerminalPayload)),
 		];
-		void store.refreshAll();
+		// Await the first status read so the tools never see a stale hydrated state.
+		await store.refreshAll();
 	});
 
 	// Keep the chat free while children work (src/free-chat.ts). Headless runs are left alone:
@@ -109,6 +121,7 @@ function collectVoiceEntries(ctx: ExtensionContext): VoiceEntry[] {
 		if (entry.type !== "custom" || entry.customType !== VOICE_ENTRY) continue;
 		const data = entry.data as Partial<VoiceEntry> | undefined;
 		if (!data || typeof data.runId !== "string" || typeof data.name !== "string" || typeof data.role !== "string") continue;
+		const worktree = parseRiffWorktree(data.worktree);
 		entries.push({
 			runId: data.runId,
 			name: data.name,
@@ -118,6 +131,7 @@ function collectVoiceEntries(ctx: ExtensionContext): VoiceEntry[] {
 			parent: typeof data.parent === "string" ? data.parent : "conductor",
 			origin: data.origin === "fugue" ? "fugue" : "subagent",
 			...(typeof data.startedAt === "number" ? { startedAt: data.startedAt } : {}),
+			...(worktree ? { worktree } : {}),
 		});
 	}
 	return entries;
