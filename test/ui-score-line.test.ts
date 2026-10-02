@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { ScoreSnapshot, Voice } from "../src/types.ts";
 import { layoutScoreLine, ScoreLineComponent, scoreVisible, visibleVoices } from "../src/ui/score-line.ts";
 import { assertFits, darkTheme, stripAnsi } from "./helpers.ts";
-import { FIXTURE_NOW, fixture1, fixture5 } from "./fixtures/snapshots.ts";
+import { FIXTURE_NOW, fixture1, fixture15, fixture5 } from "./fixtures/snapshots.ts";
 
 function voice(partial: Partial<Voice> & Pick<Voice, "runId" | "name" | "state">): Voice {
 	return { role: "worker", parent: "conductor", origin: "fugue", ...partial };
@@ -24,34 +24,34 @@ test("visibility: non-terminal always, settled only for 60s", () => {
 });
 
 test("the line degrades and always fits", () => {
-	const snapshot = fixture5();
 	const theme = darkTheme();
-	for (const width of [40, 60, 100, 160]) {
-		const lines = layoutScoreLine(snapshot, { width, now: FIXTURE_NOW, theme });
-		assert.equal(lines.length, 1);
-		assertFits(lines, width, `score-line ${width}`);
+	for (const snapshot of [fixture1(), fixture5(), fixture15()]) {
+		for (const width of [40, 60, 100, 160]) {
+			const lines = layoutScoreLine(snapshot, { width, now: FIXTURE_NOW, theme });
+			assert.equal(lines.length, 1);
+			assertFits(lines, width, `score-line ${width}`);
+		}
 	}
-	const wide = stripAnsi(layoutScoreLine(snapshot, { width: 200, now: FIXTURE_NOW, theme })[0]);
+	const wide = stripAnsi(layoutScoreLine(fixture5(), { width: 200, now: FIXTURE_NOW, theme })[0]);
 	assert.ok(wide.includes("? db asks: Postgres or SQLite?"), wide);
-	assert.ok(wide.includes("● auth 4m"), wide);
+	assert.ok(wide.includes("● auth 4m"), "few riffs are listed one by one with their time");
 	assert.ok(!wide.includes("worker"), "roles live behind ↓, not on the line");
-	const at60 = stripAnsi(layoutScoreLine(snapshot, { width: 60, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(at60.includes("asks: Postgres or SQLite?"), "the question beats extra names");
-	assert.match(at60, /\+\d/);
-	const at40 = stripAnsi(layoutScoreLine(snapshot, { width: 40, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(at40.includes("db asks") && !at40.includes("Postgres"), at40);
+	const at60 = stripAnsi(layoutScoreLine(fixture5(), { width: 60, now: FIXTURE_NOW, theme })[0]);
+	assert.ok(at60.includes("asks: Postgres or SQLite?"), "the question beats the list");
 	const narrow = stripAnsi(layoutScoreLine(fixture1(), { width: 12, now: FIXTURE_NOW, theme })[0]);
 	assert.ok(narrow.trimStart().startsWith("fugue"), narrow);
 });
 
-test("riffs settled over a minute ago are only counted", () => {
-	const base = fixture5();
-	const old = { ...base, voices: base.voices.map((voice, i) => (i < 2 ? { ...voice, state: "done" as const, endedAt: FIXTURE_NOW - 120_000 } : voice)) };
-	const line = stripAnsi(layoutScoreLine(old, { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
-	assert.ok(line.includes("2 done"), line);
-	const failed = { ...old, voices: old.voices.map((voice, i) => (i === 0 ? { ...voice, state: "failed" as const } : voice)) };
-	const withFailure = stripAnsi(layoutScoreLine(failed, { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
-	assert.ok(withFailure.includes("1 done · 1 failed"), withFailure);
+test("many riffs read as one summary with the longest one named", () => {
+	const line = stripAnsi(layoutScoreLine(fixture15(), { width: 160, now: FIXTURE_NOW, theme: darkTheme() })[0]);
+	assert.match(line, /● \d+ working · \d+ queued · longest auth 4m/);
+	assert.ok(line.includes("asks: Postgres or SQLite?"), line);
+});
+
+test("the line shows what the orchestration costs, not what is done", () => {
+	const line = stripAnsi(layoutScoreLine(fixture5(), { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
+	assert.match(line, /│ \d+k · \$\d+\.\d\d │ ↓$/);
+	assert.ok(!line.includes("done"), line);
 });
 
 test("component caches on version, width and elapsed second", () => {

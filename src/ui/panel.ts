@@ -8,6 +8,7 @@ import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ScoreSnapshot, Voice } from "../types.ts";
 import {
 	durationLabel,
+	openQuestions,
 	finishedLine,
 	finishedVoices,
 	isRecentSettled,
@@ -198,7 +199,8 @@ export class ScorePanel {
 		if (key === this.cachedKey && this.cachedLines) return this.cachedLines;
 
 		const height = Math.max(4, Math.floor(this.rows() * 0.6)) - (finished.length > 0 ? 1 : 0);
-		const view = { ...snapshot, voices: live };
+		// Only what is pending: open questions. The message history lives in each riff's view.
+		const view = { ...snapshot, voices: live, edges: openQuestions(live) };
 		const options = { width, height, selected, now, theme: this.theme };
 		const lines = width <= TREE_MAX_WIDTH || cardsPerRow(width) < 2 ? layoutTree(view, options) : layoutGraph(view, options);
 		// The finished summary sits just above the key hint.

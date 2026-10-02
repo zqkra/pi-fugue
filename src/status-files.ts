@@ -4,7 +4,7 @@
  * Mapping and activity derivation are pure so tests can run on real fixtures.
  */
 
-import { open, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import type { Activity, TokenUsage, Voice, VoiceState } from "./types.ts";
 
@@ -322,6 +322,43 @@ export async function readPendingQuestion(asyncDir: string): Promise<PendingQues
 		return { id, message, at };
 	}
 	return undefined;
+}
+
+/**
+ * The open `contact_supervisor` request of a run, which holds the voice's real
+ * question (the control event only says "waiting for a supervisor reply").
+ * pi-subagents deletes the request once it is answered, so none means answered.
+ */
+export async function readSupervisorRequest(root: string, runId: string): Promise<PendingQuestion | undefined> {
+	const base = join(root, "supervisor-channels");
+	let channels: string[];
+	try {
+		channels = (await readdir(base)).filter((name) => name.startsWith(`${runId}-`));
+	} catch {
+		return undefined;
+	}
+	let newest: PendingQuestion | undefined;
+	for (const channel of channels) {
+		const dir = join(base, channel, "requests");
+		let files: string[];
+		try {
+			files = (await readdir(dir)).filter((name) => name.endsWith(".json"));
+		} catch {
+			continue;
+		}
+		for (const file of files) {
+			try {
+				const request = JSON.parse(await readFile(join(dir, file), "utf8")) as { id?: unknown; message?: unknown; createdAt?: unknown };
+				if (typeof request.message !== "string" || !request.message.trim()) continue;
+				const at = typeof request.createdAt === "number" ? request.createdAt : Date.parse(String(request.createdAt)) || 0;
+				if (newest && at <= newest.at) continue;
+				newest = { id: typeof request.id === "string" ? request.id : file.slice(0, -5), message: request.message.trim(), at };
+			} catch {
+				// A request being written right now is picked up on the next read.
+			}
+		}
+	}
+	return newest;
 }
 
 /** Everything the store copies from a status read into its public Voice. */

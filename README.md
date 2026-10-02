@@ -2,11 +2,11 @@
 
 Named subagents for [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent), live under the footer.
 
-![Fugue line](docs/fugue-line.png)
+![Fugue line](docs/line.png)
 
 `↓` on an empty editor:
 
-![Fugue score](docs/fugue-score.png)
+![Fugue score](docs/panel.png)
 
 ## Install
 

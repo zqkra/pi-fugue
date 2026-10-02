@@ -266,9 +266,14 @@ test("a supervisor request blocks the voice, records an edge, and clears on runn
 	try {
 		const { store } = makeStore(root);
 		store.registerVoice({ runId: "run-1", name: "db", role: "scout", origin: "fugue", asyncDir: join(root, "async-subagent-runs", "run-1") });
+		// The control event only carries a generic text; the open request file holds the real question.
+		const requests = join(root, "supervisor-channels", "run-1-scout-0", "requests");
+		await mkdir(requests, { recursive: true });
+		await writeFile(join(requests, "q1.json"), JSON.stringify({ id: "q1", message: "Postgres or SQLite?", createdAt: NOW }));
 		store.onControlEvent({
-			event: { type: "needs_attention", reason: "supervisor_request", message: "Postgres or SQLite?", toolCallId: "q1", ts: NOW, runId: "run-1" },
+			event: { type: "needs_attention", reason: "supervisor_request", message: "scout is waiting for a supervisor reply", toolCallId: "q1", ts: NOW, runId: "run-1" },
 		});
+		await new Promise((resolve) => setTimeout(resolve, 20));
 		assert.equal(store.voice("run-1")?.state, "blocked");
 		assert.equal(store.voice("run-1")?.question?.message, "Postgres or SQLite?");
 		assert.deepEqual(store.snapshot().edges.map((edge) => [edge.from, edge.to, edge.kind]), [["run-1", "conductor", "asked"]]);

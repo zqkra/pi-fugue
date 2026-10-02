@@ -52,9 +52,60 @@ export function stateToken(theme: Theme, state: VoiceState): string {
 	return theme.fg(stateColor(state), stateGlyph(state));
 }
 
-/** Fugue's mark: a filled chip, a shape nothing else in Pi's bottom rows uses. */
-export function brand(theme: Theme): string {
-	return theme.bg("selectedBg", theme.fg("text", theme.bold(" fugue ")));
+/** What the team as a whole needs from the conductor, most urgent first. */
+export type Tone = "asks" | "failed" | "working" | "done";
+
+/** The pill's fill per tone. Working shares Pi's accent family; the others are the state hues. */
+const TONES: Record<Tone, ThemeColor> = {
+	working: "customMessageLabel",
+	asks: "warning",
+	failed: "error",
+	done: "success",
+};
+
+export function teamTone(voices: readonly Voice[]): Tone {
+	if (voices.some((voice) => voice.state === "blocked")) return "asks";
+	if (voices.some((voice) => voice.state === "failed")) return "failed";
+	if (voices.every((voice) => TERMINAL_STATES.has(voice.state))) return "done";
+	return "working";
+}
+
+/** A foreground escape turned into the same color as a background, and back. */
+function swapLayer(ansi: string, to: "fg" | "bg"): string {
+	return to === "bg"
+		? ansi.replace(/\x1b\[38;/, "\x1b[48;").replace(/\x1b\[3(\d)m/, "\x1b[4$1m").replace(/\x1b\[9(\d)m/, "\x1b[10$1m")
+		: ansi.replace(/\x1b\[48;/, "\x1b[38;").replace(/\x1b\[4(\d)m/, "\x1b[3$1m").replace(/\x1b\[10(\d)m/, "\x1b[9$1m");
+}
+
+/**
+ * Fugue's mark: a solid pill in the team's hue with dark text, so the one place
+ * the eye lands already says whether anything needs the conductor. Colors come
+ * from the active theme; only their layer is swapped.
+ */
+export function brand(theme: Theme, tone: Tone): string {
+	const fill = swapLayer(theme.getFgAnsi(TONES[tone]), "bg");
+	const ink = swapLayer(theme.getBgAnsi("toolPendingBg"), "fg");
+	return `${fill}${ink}\x1b[1m fugue \x1b[22m\x1b[39m\x1b[49m`;
+}
+
+/** Open questions, drawn as edges: the panel shows what is pending, not the history. */
+export function openQuestions(voices: readonly Voice[]): MessageEdge[] {
+	return voices.flatMap((voice) =>
+		voice.state === "blocked" && voice.question
+			? [{ from: voice.runId, to: "conductor", kind: "asked" as const, at: voice.question.at, text: voice.question.message }]
+			: [],
+	);
+}
+
+/** What the orchestration has spent: live tokens plus the cost of settled riffs. */
+export function spend(voices: readonly Voice[]): { tokens: number; costUsd: number } {
+	let tokens = 0;
+	let costUsd = 0;
+	for (const voice of voices) {
+		tokens += voice.tokens?.total ?? 0;
+		costUsd += voice.costUsd ?? 0;
+	}
+	return { tokens, costUsd };
 }
 
 /** The activity word in the voice's state hue. */
@@ -237,7 +288,11 @@ export function edgeLine(
 ): string {
 	const from = theme.fg("text", theme.bold(nameOf(edge.from)));
 	const to = theme.fg("text", theme.bold(nameOf(edge.to)));
-	const head = ` ${from}${theme.fg("dim", " → ")}${to}`;
+	// A question to the conductor reads like the Score line: `? schema asks "…"`.
+	const head =
+		edge.kind === "asked" && edge.to === "conductor"
+			? ` ${theme.fg("warning", "?")} ${from} ${theme.fg("warning", "asks")}`
+			: ` ${from}${theme.fg("dim", " → ")}${to}`;
 	const age = theme.fg("dim", `  ${ageLabel(Math.max(0, now - edge.at))}`);
 	let excerpt = "";
 	if (edge.text) {

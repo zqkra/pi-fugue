@@ -16,10 +16,12 @@ import {
 	applyVoiceFields,
 	readOutputTail,
 	readPendingQuestion,
+	readSupervisorRequest,
 	readStatusFile,
 	readVoiceFields,
 	statusExists,
 	terminalState,
+	type PendingQuestion,
 	type StatusSnapshot,
 } from "./status-files.ts";
 import { asyncDirForRun } from "./paths.ts";
@@ -380,9 +382,7 @@ export class Store implements RosterView, ScoreActions {
 		const at = typeof event.ts === "number" ? event.ts : this.now();
 		const id = typeof event.toolCallId === "string" ? event.toolCallId : String(at);
 		if (record.voice.question?.id === id) return;
-		record.voice = { ...record.voice, state: "blocked", activity: undefined, question: { id, message, at } };
-		this.addEdge({ from: runId, to: "conductor", kind: "asked", at, text: truncate(message, EDGE_TEXT_CHARS) });
-		this.publish();
+		void this.markBlocked(record, { id, message, at });
 	}
 
 	/** `subagent:process-terminal`: re-read status; the pid check handles death. */
@@ -513,10 +513,18 @@ export class Store implements RosterView, ScoreActions {
 	}
 
 	private async recoverQuestion(record: VoiceRecord, asyncDir: string): Promise<void> {
-		const question = await readPendingQuestion(asyncDir);
-		if (!question || this.voices.get(record.voice.runId) !== record) return;
-		if (record.voice.question || TERMINAL_STATES.has(record.voice.state)) return;
-		record.voice = { ...record.voice, state: "blocked", question };
+		const fallback = await readPendingQuestion(asyncDir);
+		if (!fallback || record.voice.question) return;
+		await this.markBlocked(record, fallback);
+	}
+
+	/** A voice asked the conductor: show its real question from the open request, not the generic notice. */
+	private async markBlocked(record: VoiceRecord, fallback: PendingQuestion): Promise<void> {
+		const request = await readSupervisorRequest(this.options.tempRoot, record.voice.runId);
+		if (this.disposed || this.voices.get(record.voice.runId) !== record || TERMINAL_STATES.has(record.voice.state)) return;
+		const question = request ?? fallback;
+		if (record.voice.question?.message === question.message) return;
+		record.voice = { ...record.voice, state: "blocked", activity: undefined, question };
 		this.addEdge({ from: record.voice.runId, to: "conductor", kind: "asked", at: question.at, text: truncate(question.message, EDGE_TEXT_CHARS) });
 		this.publish();
 	}
