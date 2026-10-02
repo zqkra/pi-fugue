@@ -206,7 +206,7 @@ export class VoiceView {
 			theme.fg("text", theme.bold(voice.name)),
 			theme.fg("muted", voice.role),
 			theme.fg(voice.model ? "text" : "muted", voice.model ? modelLabel(voice.model) : "no model"),
-			stateWord(theme, voice),
+			stateWord(theme, voice, now),
 			ms !== undefined && ms >= 1000 ? theme.fg("dim", durationLabel(ms)) : "",
 			theme.fg("muted", tokenLabel(voice.tokens?.total)),
 			theme.fg("muted", costLabel(voice.costUsd)),

@@ -7,8 +7,12 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
 import type { ScoreSnapshot, Voice } from "../types.ts";
 import {
-	stateWord,
 	durationLabel,
+	finishedLine,
+	finishedVoices,
+	isRecentSettled,
+	liveVoices,
+	stateWord,
 	edgeLine,
 	keyHint,
 	modelLabel,
@@ -49,7 +53,7 @@ function siblingMaps(voices: readonly Voice[]): { childrenOf: Map<string, Voice[
 function treeRow(theme: Theme, voice: Voice, prefix: string, selected: boolean, now: number): string {
 	const name = selected ? theme.bg("selectedBg", theme.fg("text", theme.bold(voice.name))) : theme.fg("text", theme.bold(voice.name));
 	const role = voice.role && voice.role !== voice.name ? `  ${theme.fg("muted", voice.role)}` : "";
-	const word = `  ${stateWord(theme, voice)}`;
+	const word = `  ${stateWord(theme, voice, now)}`;
 	const ms = voiceDuration(voice, now);
 	const time = ms !== undefined && ms >= 1000 ? ` ${theme.fg("dim", durationLabel(ms))}` : "";
 	return `${theme.fg(selected ? "text" : "dim", prefix)}${stateToken(theme, voice.state)} ${name}${role}${word}${time}`;
@@ -138,8 +142,9 @@ export class ScorePanel {
 		return this.selectedIndex;
 	}
 
+	/** The voices on the diagram: settled ones leave it a minute after they finish. */
 	private voices(): Voice[] {
-		return orderVoices(this.getSnapshot().voices);
+		return orderVoices(liveVoices(this.getSnapshot().voices, Date.now()));
 	}
 
 	/**
@@ -182,17 +187,23 @@ export class ScorePanel {
 	render(width: number): string[] {
 		const snapshot = this.getSnapshot();
 		const now = Date.now();
-		const voices = orderVoices(snapshot.voices);
+		const live = liveVoices(snapshot.voices, now);
+		const finished = finishedVoices(snapshot.voices, now);
+		const voices = orderVoices(live);
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, voices.length - 1));
 		const selected = voices[this.selectedIndex]?.runId;
-		const running = snapshot.voices.some((voice) => voice.state === "running");
-		const key = `${snapshot.version}:${width}:${this.selectedIndex}:${running ? Math.floor(now / 1000) : 0}`;
+		// Elapsed times and the one-minute exit of settled riffs both move with the clock.
+		const timed = snapshot.voices.some((voice) => voice.state === "running" || isRecentSettled(voice, now));
+		const key = `${snapshot.version}:${width}:${this.selectedIndex}:${timed ? Math.floor(now / 1000) : 0}`;
 		if (key === this.cachedKey && this.cachedLines) return this.cachedLines;
 
-		const height = Math.max(4, Math.floor(this.rows() * 0.6));
+		const height = Math.max(4, Math.floor(this.rows() * 0.6)) - (finished.length > 0 ? 1 : 0);
+		const view = { ...snapshot, voices: live };
 		const options = { width, height, selected, now, theme: this.theme };
-		this.cachedLines =
-			width <= TREE_MAX_WIDTH || cardsPerRow(width) < 2 ? layoutTree(snapshot, options) : layoutGraph(snapshot, options);
+		const lines = width <= TREE_MAX_WIDTH || cardsPerRow(width) < 2 ? layoutTree(view, options) : layoutGraph(view, options);
+		// The finished summary sits just above the key hint.
+		if (finished.length > 0) lines.splice(lines.length - 1, 0, finishedLine(this.theme, finished, width));
+		this.cachedLines = lines;
 		this.cachedKey = key;
 		return this.cachedLines;
 	}

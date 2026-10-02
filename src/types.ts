@@ -23,6 +23,12 @@ export interface Activity {
 	kind: ActivityKind;
 	/** Short detail: a path, a command head, a tool name. Already single-line, untrimmed. */
 	detail?: string;
+	/**
+	 * Set when this is the last finished tool rather than one running now. Tools
+	 * often last milliseconds, so between turns the latest finished tool is the
+	 * honest answer to "what is it doing"; once it is old the voice is thinking.
+	 */
+	endedAt?: number;
 }
 
 export interface TokenUsage {
@@ -53,6 +59,8 @@ export interface Voice {
 	endedAt?: number;
 	tokens?: TokenUsage;
 	costUsd?: number;
+	/** Tool calls so far; a progress signal while running. */
+	toolCount?: number;
 	/** pi-subagents async run directory (status.json, events.jsonl, output-0.log). */
 	asyncDir?: string;
 	/** Pending question from the voice to the conductor (contact_supervisor). */

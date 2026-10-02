@@ -32,24 +32,26 @@ test("the line degrades and always fits", () => {
 		assertFits(lines, width, `score-line ${width}`);
 	}
 	const wide = stripAnsi(layoutScoreLine(snapshot, { width: 200, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(wide.includes("asks: Postgres or SQLite?"), wide);
-	assert.ok(wide.includes("auth worker writing"), wide);
-	const at100 = stripAnsi(layoutScoreLine(snapshot, { width: 100, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(at100.includes("asks: Postgres or SQLite?"), at100);
-	assert.ok(at100.includes("+3"), at100);
+	assert.ok(wide.includes("? db asks: Postgres or SQLite?"), wide);
+	assert.ok(wide.includes("● auth 4m"), wide);
+	assert.ok(!wide.includes("worker"), "roles live behind ↓, not on the line");
 	const at60 = stripAnsi(layoutScoreLine(snapshot, { width: 60, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(at60.includes("asks: Postgres or SQLite?"), at60);
-	assert.ok(at60.includes("+4"), at60);
+	assert.ok(at60.includes("asks: Postgres or SQLite?"), "the question beats extra names");
+	assert.match(at60, /\+\d/);
 	const at40 = stripAnsi(layoutScoreLine(snapshot, { width: 40, now: FIXTURE_NOW, theme })[0]);
-	assert.ok(at40.includes("db asks"), at40);
-	assert.ok(!at40.includes("Postgres"), at40);
+	assert.ok(at40.includes("db asks") && !at40.includes("Postgres"), at40);
 	const narrow = stripAnsi(layoutScoreLine(fixture1(), { width: 12, now: FIXTURE_NOW, theme })[0]);
 	assert.ok(narrow.trimStart().startsWith("fugue"), narrow);
 });
 
-test("the fallback shows the total voice count", () => {
-	const line = stripAnsi(layoutScoreLine(fixture1(), { width: 10, now: FIXTURE_NOW, theme: darkTheme() })[0]);
-	assert.equal(line, " fugue  1");
+test("riffs settled over a minute ago are only counted", () => {
+	const base = fixture5();
+	const old = { ...base, voices: base.voices.map((voice, i) => (i < 2 ? { ...voice, state: "done" as const, endedAt: FIXTURE_NOW - 120_000 } : voice)) };
+	const line = stripAnsi(layoutScoreLine(old, { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
+	assert.ok(line.includes("2 done"), line);
+	const failed = { ...old, voices: old.voices.map((voice, i) => (i === 0 ? { ...voice, state: "failed" as const } : voice)) };
+	const withFailure = stripAnsi(layoutScoreLine(failed, { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
+	assert.ok(withFailure.includes("1 done · 1 failed"), withFailure);
 });
 
 test("component caches on version, width and elapsed second", () => {

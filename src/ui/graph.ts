@@ -17,7 +17,7 @@ import type { ConductorInfo, ScoreSnapshot, Voice } from "../types.ts";
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
-	activityWord,
+	activityText,
 	costLabel,
 	durationLabel,
 	edgeLine,
@@ -260,13 +260,15 @@ function drawCard(
 	const model = voice.model ? modelLabel(voice.model) : "no model";
 	canvas.text(cx, y + 2, clip(model, inner), voice.model ? "text" : "muted");
 
-	canvas.text(cx, y + 3, clip(activityWord(voice), inner), stateColor(voice.state));
 	const ms = voiceDuration(voice, options.now);
 	const time = ms !== undefined && ms >= 1000 ? durationLabel(ms) : "";
+	const activityWidth = Math.max(1, inner - (time ? visibleWidth(time) + 1 : 0));
+	canvas.text(cx, y + 3, clip(activityText(voice, options.now), activityWidth), stateColor(voice.state));
 	if (time) canvas.text(cx + inner - visibleWidth(time), y + 3, time, "dim");
 
 	const tokens = tokenLabel(voice.tokens?.total);
-	const cost = costLabel(voice.costUsd);
+	// Cost is only known once a run settles; while it runs, the tool count shows progress.
+	const cost = voice.costUsd === undefined && voice.toolCount !== undefined ? `${voice.toolCount} tool${voice.toolCount === 1 ? "" : "s"}` : costLabel(voice.costUsd);
 	const empty = tokens === "—" && cost === "—";
 	canvas.text(cx, y + 4, clip(empty ? "—" : `${tokens} · ${cost}`, inner), empty ? "dim" : "text");
 

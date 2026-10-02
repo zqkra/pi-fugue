@@ -5,10 +5,13 @@
 
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import type { MessageEdge, Voice, VoiceState } from "../types.ts";
+import { TERMINAL_STATES, type MessageEdge, type Voice, type VoiceState } from "../types.ts";
 
-/** Settled voices stay on the Score line for this long. */
+/** Settled voices stay on the Score line and in the diagram for this long. */
 export const RECENT_SETTLED_MS = 60_000;
+
+/** A finished tool still describes what a voice is doing for this long; after it, the voice is thinking. */
+export const TOOL_ACTIVITY_MS = 15_000;
 
 const GLYPHS: Record<VoiceState, string> = {
 	queued: "○",
@@ -55,20 +58,78 @@ export function brand(theme: Theme): string {
 }
 
 /** The activity word in the voice's state hue. */
-export function stateWord(theme: Theme, voice: Voice): string {
-	return theme.fg(stateColor(voice.state), activityWord(voice));
+export function stateWord(theme: Theme, voice: Voice, now: number): string {
+	return theme.fg(stateColor(voice.state), activityWord(voice, now));
+}
+
+/** What a running voice is doing now: its tool, or thinking once the last tool is old. */
+function currentActivity(voice: Voice, now: number): Voice["activity"] {
+	const activity = voice.activity;
+	if (!activity || activity.endedAt === undefined || now - activity.endedAt <= TOOL_ACTIVITY_MS) return activity;
+	return { kind: "thinking" };
 }
 
 /** The word shown next to a voice: the activity while running, the state otherwise. */
-export function activityWord(voice: Voice): string {
+export function activityWord(voice: Voice, now: number): string {
 	switch (voice.state) {
 		case "blocked":
 			return "asks";
 		case "running":
-			return voice.activity?.kind ?? "thinking";
+			return currentActivity(voice, now)?.kind ?? "thinking";
 		default:
 			return voice.state;
 	}
+}
+
+/** The activity word plus its detail: `running python3 render.py`, `reading src/auth.ts`. */
+export function activityText(voice: Voice, now: number): string {
+	const word = activityWord(voice, now);
+	const detail = voice.state === "running" ? currentActivity(voice, now)?.detail : undefined;
+	return detail ? `${word} ${detail}` : word;
+}
+
+/**
+ * Voices the diagram draws: active ones, ones settled in the last minute, and
+ * the ancestors of any of those so the tree never loses a link.
+ */
+export function liveVoices(voices: readonly Voice[], now: number): Voice[] {
+	const byId = new Map(voices.map((voice) => [voice.runId, voice]));
+	const keep = new Set<string>();
+	for (const voice of voices) {
+		if (TERMINAL_STATES.has(voice.state) && !isRecentSettled(voice, now)) continue;
+		for (let current: Voice | undefined = voice; current && !keep.has(current.runId); current = byId.get(current.parent)) {
+			keep.add(current.runId);
+		}
+	}
+	return voices.filter((voice) => keep.has(voice.runId));
+}
+
+/** `finished  ✓ revisa 7m35s · ✗ api 2m40s +3`: the riffs that left the diagram, newest first. */
+export function finishedLine(theme: Theme, finished: readonly Voice[], width: number): string {
+	const label = theme.fg("dim", " finished  ");
+	const parts: string[] = [];
+	let used = visibleWidth(label);
+	for (const [index, voice] of finished.entries()) {
+		const ms = voiceDuration(voice, Date.now());
+		const time = ms !== undefined && ms >= 1000 ? ` ${theme.fg("dim", durationLabel(ms))}` : "";
+		const part = `${stateToken(theme, voice.state)} ${theme.fg("muted", voice.name)}${time}`;
+		const rest = finished.length - index - 1;
+		const reserve = rest > 0 ? visibleWidth(` +${rest}`) : 0;
+		if (used + visibleWidth(part) + 3 + reserve > width && parts.length > 0) {
+			return label + parts.join(theme.fg("dim", " · ")) + theme.fg("dim", ` +${finished.length - index}`);
+		}
+		parts.push(part);
+		used += visibleWidth(part) + 3;
+	}
+	return truncateToWidth(label + parts.join(theme.fg("dim", " · ")), width);
+}
+
+/** Settled voices no longer drawn, newest first. */
+export function finishedVoices(voices: readonly Voice[], now: number): Voice[] {
+	const live = new Set(liveVoices(voices, now).map((voice) => voice.runId));
+	return voices
+		.filter((voice) => TERMINAL_STATES.has(voice.state) && !live.has(voice.runId))
+		.sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0));
 }
 
 /** Footer's model label: `claude-opus-5-5` -> `Opus 5.5`, `some/deepseek-v4.1-flash:low` -> `deepseek-v4.1-flash`. */
@@ -91,7 +152,7 @@ export function durationLabel(ms: number): string {
 	return `${Math.floor(minutes / 60)}h${String(minutes % 60).padStart(2, "0")}m`;
 }
 
-/** `48s`, `4m`, `1h` — the compact-line form. */
+/** `48s`, `4m`, `1h`: one riff's time on the Score line. */
 export function shortDuration(ms: number): string {
 	const seconds = Math.max(0, Math.floor(ms / 1000));
 	if (seconds < 60) return `${seconds}s`;

@@ -24,6 +24,8 @@ export interface StatusStep {
 	totalCost?: { costUsd?: number };
 	error?: string;
 	lane?: { key?: string };
+	toolCount?: number;
+	recentTools?: Array<{ tool?: string; args?: unknown; endMs?: number }>;
 }
 
 export interface StatusFile {
@@ -61,6 +63,7 @@ export interface VoiceFields {
 	model?: string;
 	thinking?: string;
 	activity?: Activity;
+	toolCount?: number;
 	startedAt?: number;
 	endedAt?: number;
 	tokens?: TokenUsage;
@@ -145,21 +148,33 @@ export interface ActivityInput {
 	state?: string;
 	activityState?: string;
 	currentTool?: string;
-	currentToolArgs?: string;
+	currentToolArgs?: unknown;
 	currentPath?: string;
 	cwd?: string;
+	/** Finished tools, oldest first; the last one stands in when no tool runs now. */
+	recentTools?: Array<{ tool?: string; args?: unknown; endMs?: number }>;
 }
 
 export function deriveActivity(input: ActivityInput): Activity | undefined {
 	if (input.state !== "running" || input.activityState === "needs_attention") return undefined;
-	const tool = input.currentTool;
-	if (!tool) return { kind: "thinking" };
-	if (READ_TOOLS.has(tool)) return { kind: "reading", detail: pathDetail(input.currentPath, input.cwd) };
-	if (WRITE_TOOLS.has(tool)) return { kind: "writing", detail: pathDetail(input.currentPath, input.cwd) };
+	if (input.currentTool) return toolActivity(input.currentTool, input.currentToolArgs, input.currentPath, input.cwd);
+	const last = input.recentTools?.at(-1);
+	if (!last?.tool) return { kind: "thinking" };
+	const activity = toolActivity(last.tool, last.args, undefined, input.cwd);
+	return typeof last.endMs === "number" ? { ...activity, endedAt: last.endMs } : activity;
+}
+
+function toolActivity(tool: string, args: unknown, path: string | undefined, cwd: string | undefined): Activity {
+	if (READ_TOOLS.has(tool)) return { kind: "reading", detail: pathDetail(path ?? argText(args), cwd) };
+	if (WRITE_TOOLS.has(tool)) return { kind: "writing", detail: pathDetail(path ?? argText(args), cwd) };
 	if (SEARCH_TOOLS.has(tool)) return { kind: "searching" };
-	if (tool === "bash") return { kind: "running", detail: commandDetail(input.currentToolArgs) };
+	if (tool === "bash") return { kind: "running", detail: commandDetail(args) };
 	if (DELEGATE_TOOLS.has(tool)) return { kind: "delegating" };
-	return { kind: "thinking" };
+	return { kind: "running", detail: tool };
+}
+
+function argText(args: unknown): string | undefined {
+	return typeof args === "string" && args ? args.replace(/\s+/g, " ").trim() : undefined;
 }
 
 function tokenUsage(tokens: TokenUsage | undefined): TokenUsage | undefined {
@@ -172,9 +187,10 @@ function pathDetail(currentPath: string | undefined, cwd: string | undefined): s
 	return currentPath;
 }
 
+/** The command a voice runs, without the `cd <dir> &&` prefix agents put in front. */
 function commandDetail(args: unknown): string | undefined {
 	if (typeof args !== "string" || !args) return undefined;
-	const single = args.replace(/\s+/g, " ").trim();
+	const single = args.replace(/\s+/g, " ").trim().replace(/^cd \S+ && /, "");
 	return single.length > BASH_DETAIL_CHARS ? single.slice(0, BASH_DETAIL_CHARS) : single;
 }
 
@@ -192,7 +208,16 @@ export function readVoiceFields(status: StatusFile): VoiceFields {
 		...(typeof status.pid === "number" ? { pid: status.pid } : {}),
 		...(step?.model ? { model: step.model } : {}),
 		...(step?.thinking ? { thinking: step.thinking } : {}),
-		activity: deriveActivity({ state: status.state, activityState, currentTool, currentToolArgs, currentPath, cwd: status.cwd }),
+		activity: deriveActivity({
+			state: status.state,
+			activityState,
+			currentTool,
+			currentToolArgs,
+			currentPath,
+			cwd: status.cwd,
+			recentTools: step?.recentTools,
+		}),
+		...(typeof step?.toolCount === "number" ? { toolCount: step.toolCount } : {}),
 		...(step?.startedAt !== undefined || status.startedAt !== undefined ? { startedAt: step?.startedAt ?? status.startedAt } : {}),
 		...(step?.endedAt !== undefined || status.endedAt !== undefined ? { endedAt: step?.endedAt ?? status.endedAt } : {}),
 		...(tokens ? { tokens } : {}),
@@ -307,6 +332,7 @@ export function applyVoiceFields(voice: Voice, fields: VoiceFields): Voice {
 		...(fields.model ? { model: fields.model } : {}),
 		...(fields.thinking ? { thinking: fields.thinking } : {}),
 		activity: fields.activity,
+		...(fields.toolCount !== undefined ? { toolCount: fields.toolCount } : {}),
 		...(fields.startedAt !== undefined ? { startedAt: fields.startedAt } : {}),
 		...(fields.endedAt !== undefined ? { endedAt: fields.endedAt } : {}),
 		...(fields.tokens ? { tokens: fields.tokens } : {}),
