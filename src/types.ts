@@ -37,6 +37,20 @@ export interface TokenUsage {
 	total: number;
 }
 
+/** A writer riff's own branch and folder. The branch outlives the folder and any crash. */
+export interface RiffWorktree {
+	/** Main checkout the branch merges back into. */
+	repoRoot: string;
+	/** Folder the riff works in. */
+	path: string;
+	/** `fugue/<name>`. */
+	branch: string;
+	/** Commit the branch started from. */
+	base: string;
+	/** "active" while the folder exists; "merged" / "discarded" once the conductor settled it. */
+	status: "active" | "merged" | "discarded";
+}
+
 export interface Voice {
 	/** pi-subagents run id (UUID). Stable key. */
 	runId: string;
@@ -63,6 +77,8 @@ export interface Voice {
 	toolCount?: number;
 	/** Current context size and the model's limit: how close the riff is to running out. */
 	context?: { used: number; limit?: number };
+	/** Isolated git worktree a writer riff works in (Fugue-managed, see src/worktrees.ts). */
+	worktree?: RiffWorktree;
 	/** pi-subagents async run directory (status.json, events.jsonl, output-0.log). */
 	asyncDir?: string;
 	/** Pending question from the voice to the conductor (contact_supervisor). */
