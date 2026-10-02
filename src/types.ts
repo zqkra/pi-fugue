@@ -61,6 +61,8 @@ export interface Voice {
 	costUsd?: number;
 	/** Tool calls so far; a progress signal while running. */
 	toolCount?: number;
+	/** Current context size and the model's limit: how close the riff is to running out. */
+	context?: { used: number; limit?: number };
 	/** pi-subagents async run directory (status.json, events.jsonl, output-0.log). */
 	asyncDir?: string;
 	/** Pending question from the voice to the conductor (contact_supervisor). */

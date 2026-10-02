@@ -18,14 +18,14 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	activityText,
-	costLabel,
+	contextColor,
+	contextLabel,
 	durationLabel,
 	edgeLine,
 	keyHint,
 	modelLabel,
 	stateColor,
 	stateGlyph,
-	tokenLabel,
 	voiceDuration,
 } from "./format.ts";
 
@@ -266,11 +266,13 @@ function drawCard(
 	canvas.text(cx, y + 3, clip(activityText(voice, options.now), activityWidth), stateColor(voice.state));
 	if (time) canvas.text(cx + inner - visibleWidth(time), y + 3, time, "dim");
 
-	const tokens = tokenLabel(voice.tokens?.total);
-	// Cost is only known once a run settles; while it runs, the tool count shows progress.
-	const cost = voice.costUsd === undefined && voice.toolCount !== undefined ? `${voice.toolCount} tool${voice.toolCount === 1 ? "" : "s"}` : costLabel(voice.costUsd);
-	const empty = tokens === "—" && cost === "—";
-	canvas.text(cx, y + 4, clip(empty ? "—" : `${tokens} · ${cost}`, inner), empty ? "dim" : "text");
+	// What an engineer watches per riff: how full its context is, and how far it got.
+	const context = contextLabel(voice.context);
+	const tools = voice.toolCount !== undefined ? `${voice.toolCount} tool${voice.toolCount === 1 ? "" : "s"}` : undefined;
+	if (context) canvas.text(cx, y + 4, clip(context, inner), contextColor(voice.context));
+	const toolsX = cx + (context ? visibleWidth(context) : 0);
+	if (tools && toolsX + 3 + visibleWidth(tools) <= cx + inner) canvas.text(toolsX, y + 4, `${context ? " · " : ""}${tools}`, "dim");
+	if (!context && !tools) canvas.text(cx, y + 4, "—", "dim");
 
 	for (let dy = 1; dy <= 4; dy++) {
 		canvas.put(x, y + dy, vertical, color);

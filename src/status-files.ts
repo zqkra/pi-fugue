@@ -20,10 +20,12 @@ export interface StatusStep {
 	endedAt?: number;
 	lastActivityAt?: number;
 	activityState?: string;
-	tokens?: TokenUsage;
+	/** `window` is the current context size, not a running total. */
+	tokens?: TokenUsage & { window?: number };
 	totalCost?: { costUsd?: number };
 	error?: string;
 	lane?: { key?: string };
+	contextLimit?: number;
 	toolCount?: number;
 	recentTools?: Array<{ tool?: string; args?: unknown; endMs?: number }>;
 }
@@ -64,6 +66,7 @@ export interface VoiceFields {
 	thinking?: string;
 	activity?: Activity;
 	toolCount?: number;
+	context?: { used: number; limit?: number };
 	startedAt?: number;
 	endedAt?: number;
 	tokens?: TokenUsage;
@@ -218,6 +221,9 @@ export function readVoiceFields(status: StatusFile): VoiceFields {
 			recentTools: step?.recentTools,
 		}),
 		...(typeof step?.toolCount === "number" ? { toolCount: step.toolCount } : {}),
+		...(typeof step?.tokens?.window === "number"
+			? { context: { used: step.tokens.window, ...(typeof step.contextLimit === "number" ? { limit: step.contextLimit } : {}) } }
+			: {}),
 		...(step?.startedAt !== undefined || status.startedAt !== undefined ? { startedAt: step?.startedAt ?? status.startedAt } : {}),
 		...(step?.endedAt !== undefined || status.endedAt !== undefined ? { endedAt: step?.endedAt ?? status.endedAt } : {}),
 		...(tokens ? { tokens } : {}),
@@ -370,6 +376,7 @@ export function applyVoiceFields(voice: Voice, fields: VoiceFields): Voice {
 		...(fields.thinking ? { thinking: fields.thinking } : {}),
 		activity: fields.activity,
 		...(fields.toolCount !== undefined ? { toolCount: fields.toolCount } : {}),
+		...(fields.context ? { context: fields.context } : {}),
 		...(fields.startedAt !== undefined ? { startedAt: fields.startedAt } : {}),
 		...(fields.endedAt !== undefined ? { endedAt: fields.endedAt } : {}),
 		...(fields.tokens ? { tokens: fields.tokens } : {}),

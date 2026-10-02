@@ -48,10 +48,10 @@ test("many riffs read as one summary with the longest one named", () => {
 	assert.ok(line.includes("asks: Postgres or SQLite?"), line);
 });
 
-test("the line shows what the orchestration costs, not what is done", () => {
+test("the line carries no running totals: tokens re-read per turn are not spend", () => {
 	const line = stripAnsi(layoutScoreLine(fixture5(), { width: 200, now: FIXTURE_NOW, theme: darkTheme() })[0]);
-	assert.match(line, /│ \d+k · \$\d+\.\d\d │ ↓$/);
-	assert.ok(!line.includes("done"), line);
+	assert.ok(!/\d+k|\$/.test(line), line);
+	assert.ok(line.endsWith("│ ↓"), line);
 });
 
 test("component caches on version, width and elapsed second", () => {

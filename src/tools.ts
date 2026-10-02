@@ -20,6 +20,11 @@ export interface VoiceToolDeps {
 const SPAWN_FOLLOW_UP =
 	"The riffs run in the background and notify you when they finish. End your turn now; do not call bg_wait or poll.";
 
+/** pi-subagents stops a background child at 30 min by default; real work runs longer. */
+const DEFAULT_TIMEOUT_MINUTES = 240;
+/** Before the deadline the riff is asked to stop cleanly and report what is done and what is left. */
+const CHECKPOINT_BEFORE_DEADLINE_MS = 5 * 60_000;
+
 const SPAWN_GUIDELINES = [
 	"Give every riff a short name that says its job.",
 	"The owner chooses models: pass model exactly as the owner named it and never invent a default.",
@@ -50,6 +55,9 @@ const SpawnVoiceParams = Type.Object({
 	task: Type.String({ minLength: 1, description: "Task for the riff; include everything it needs." }),
 	model: Type.Optional(Type.String({ description: "Model provider/id exactly as the owner named it. Omit to use the role default." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the riff." })),
+	timeoutMinutes: Type.Optional(
+		Type.Integer({ minimum: 1, maximum: 1440, description: `Hard deadline in minutes; default ${DEFAULT_TIMEOUT_MINUTES}. The riff is asked to wrap up 5 minutes before it.` }),
+	),
 });
 
 const VoiceSpawnParams = Type.Object({
@@ -130,6 +138,8 @@ export function createVoiceTools(getDeps: () => VoiceToolDeps | undefined): Arra
 						task: request.task,
 						...(request.model ? { model: request.model } : {}),
 						...(request.cwd ? { cwd: request.cwd } : {}),
+						timeoutMs: (request.timeoutMinutes ?? DEFAULT_TIMEOUT_MINUTES) * 60_000,
+						checkpointBeforeDeadlineMs: CHECKPOINT_BEFORE_DEADLINE_MS,
 						lane,
 					});
 					const runId = typeof data?.details?.runId === "string" ? data.details.runId : undefined;

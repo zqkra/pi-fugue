@@ -97,15 +97,17 @@ export function openQuestions(voices: readonly Voice[]): MessageEdge[] {
 	);
 }
 
-/** What the orchestration has spent: live tokens plus the cost of settled riffs. */
-export function spend(voices: readonly Voice[]): { tokens: number; costUsd: number } {
-	let tokens = 0;
-	let costUsd = 0;
-	for (const voice of voices) {
-		tokens += voice.tokens?.total ?? 0;
-		costUsd += voice.costUsd ?? 0;
-	}
-	return { tokens, costUsd };
+/** `ctx 230k/1M`, the footer's notation: how full one riff's context is. */
+export function contextLabel(context: Voice["context"]): string | undefined {
+	if (!context) return undefined;
+	return `ctx ${tokenLabel(context.used)}${context.limit ? `/${tokenLabel(context.limit)}` : ""}`;
+}
+
+/** Same thresholds as the footer: warning from 70 %, error from 90 %. */
+export function contextColor(context: Voice["context"]): ThemeColor {
+	if (!context?.limit) return "muted";
+	const percent = (context.used / context.limit) * 100;
+	return percent >= 90 ? "error" : percent >= 70 ? "warning" : "muted";
 }
 
 /** The activity word in the voice's state hue. */
@@ -127,6 +129,8 @@ export function activityWord(voice: Voice, now: number): string {
 			return "asks";
 		case "running":
 			return currentActivity(voice, now)?.kind ?? "thinking";
+		case "failed":
+			return voice.error && /timed out/i.test(voice.error) ? "timed out" : "failed";
 		default:
 			return voice.state;
 	}

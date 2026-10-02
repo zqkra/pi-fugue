@@ -112,3 +112,8 @@ test("the finished line fits and counts what it cannot show", () => {
 	assert.ok(line.length <= 60, line);
 	assert.ok(line.startsWith(" finished") && /\+\d/.test(line), line);
 });
+
+test("a riff stopped by its deadline says so", () => {
+	assert.equal(activityWord(riff("t", { state: "failed", error: "Subagent timed out after 1800000ms." }), FIXTURE_NOW), "timed out");
+	assert.equal(activityWord(riff("f", { state: "failed", error: "boom" }), FIXTURE_NOW), "failed");
+});

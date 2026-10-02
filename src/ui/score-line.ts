@@ -10,10 +10,7 @@ import { TERMINAL_STATES } from "../types.ts";
 import {
 	brand,
 	stateColor,
-	costLabel,
-	spend,
 	teamTone,
-	tokenLabel,
 	shortDuration,
 	stateToken,
 	isRecentSettled,
@@ -90,10 +87,10 @@ function summary(theme: Theme, working: readonly Voice[], now: number, withLonge
 
 /**
  * Themed, width-clamped Score line; empty when nothing is worth showing.
- * `fugue  ? db asks: …  ✗ api │ ● auth 4m  ● review 1m │ 562k · $0.41 │ ↓`
+ * `fugue  ? db asks: …  ✗ api  ● auth 4m  ● review 1m │ ↓`
  * Built for many riffs: what needs the conductor by name, the rest one by one
- * while they fit and as one summary when they do not, then what it costs.
- * Space runs out in this order: recent ✓, the per-riff list, the longest riff, the cost, the question text.
+ * while they fit and as one summary when they do not.
+ * Space runs out in this order: recent ✓, the per-riff list, the longest riff, the question text.
  */
 export function layoutScoreLine(snapshot: ScoreSnapshot, options: ScoreLineOptions): string[] {
 	const { theme, width, now } = options;
@@ -105,32 +102,27 @@ export function layoutScoreLine(snapshot: ScoreSnapshot, options: ScoreLineOptio
 	const attention = voices.filter((voice) => voice.state === "blocked" || voice.state === "failed");
 	const working = voices.filter((voice) => !TERMINAL_STATES.has(voice.state) && voice.state !== "blocked");
 	const recent = voices.filter((voice) => voice.state === "done" || voice.state === "stopped");
-	const total = spend(snapshot.voices);
-	const cost = total.costUsd > 0 ? `${theme.fg("dim", " · ")}${theme.fg("text", costLabel(total.costUsd))}` : "";
-	const spent = total.tokens > 0 ? `${theme.fg("muted", tokenLabel(total.tokens))}${cost}` : "";
 	const hint = theme.fg("dim", "↓");
 
 	type Rest = "list+recent" | "list" | "summary" | "count";
-	const compose = (withQuestion: boolean, withSpend: boolean, rest: Rest): string => {
+	const compose = (withQuestion: boolean, rest: Rest): string => {
 		const front = attention.map((voice) => item(theme, voice, now, withQuestion));
 		const team =
 			(rest === "summary" || rest === "count") && working.length > 1
 				? [summary(theme, working, now, rest === "summary")]
 				: [...working, ...(rest === "list+recent" ? recent : [])].map((voice) => item(theme, voice, now, false));
 		const body = [...front, ...team].join("  ");
-		return [`${head} ${body}`.trimEnd(), ...(withSpend && spent ? [spent] : []), hint].join(sep);
+		return [`${head} ${body}`.trimEnd(), hint].join(sep);
 	};
 
 	const rests: Rest[] = ["list+recent", "list", "summary", "count"];
 	for (const withQuestion of [true, false]) {
-		for (const withSpend of [true, false]) {
-			for (const rest of rests) {
-				const line = compose(withQuestion, withSpend, rest);
-				if (visibleWidth(line) <= width) return [line];
-			}
+		for (const rest of rests) {
+			const line = compose(withQuestion, rest);
+			if (visibleWidth(line) <= width) return [line];
 		}
 	}
-	return [truncateToWidth(compose(false, false, "count"), width)];
+	return [truncateToWidth(compose(false, "count"), width)];
 }
 
 export interface ScoreLineComponentOptions {

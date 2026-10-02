@@ -94,6 +94,9 @@ test("riff_spawn sends lane keys, never async, and registers every voice", async
 		{ version: 1, key: "db-scout" },
 	]);
 	assert.equal(bridge.requests[0].params.async, undefined);
+	// pi-subagents would stop a background child at 30 min; riffs get 4 h and a clean wrap-up before it.
+	assert.equal(bridge.requests[0].params.timeoutMs, 240 * 60_000);
+	assert.equal(bridge.requests[0].params.checkpointBeforeDeadlineMs, 5 * 60_000);
 	assert.equal(store.voiceByName("auth")?.runId, "run-1");
 	assert.equal(store.voiceByName("db-scout")?.role, "oracle");
 	assert.equal(persisted.length, 2);
