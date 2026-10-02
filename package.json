@@ -13,7 +13,8 @@
     "setup": "scripts/link-pi.sh",
     "typecheck": "tsc --noEmit -p .",
     "test": "node --test --test-reporter=spec test/*.test.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "e2e": "bash test/e2e/run-all.sh"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
