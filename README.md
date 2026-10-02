@@ -28,9 +28,13 @@ Ask in plain words:
 ## What it adds
 
 - **Riffs.** Every subagent gets a short name: `riff_spawn`, `riff_tell`, `riff_stop`, `riff_status`.
+- **Isolated writers.** Each `worker` riff gets its own branch `fugue/<name>` and folder; reads share yours.
+  `riff_merge` brings the work back (never over your in-progress merge or staged files), `riff_discard` drops it.
+- **Long runs.** Riffs get 4 h instead of pi-subagents' 30 min, and are asked to wrap up cleanly before the deadline.
 - **Free chat.** Keep talking to the conductor while riffs work. Results arrive on their own.
 - **Durable notices.** A riff that finishes while Pi is closed reports once when you return.
 - **Gates.** `fugue_gate` runs the checks in `.pi/fugue.json`.
+- **Self-check.** Fugue warns once if a pi-subagents release changes what it relies on; `/fugue doctor` shows details.
 
 Custom footers can host the line at the bottom edge by rendering the entries of
 `globalThis[Symbol.for("pi.footer-slots.v1")]` (a `Map` of `(width) => string[]`) under their own line.
