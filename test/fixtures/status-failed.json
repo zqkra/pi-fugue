@@ -1,0 +1,165 @@
+{
+  "lifecycleArtifactVersion": 3,
+  "runId": "6e642840-127a-4992-8b13-e60ec2d9d8d6",
+  "sessionId": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-01T21-27-25-783Z_01a0f95d-7156-711c-b98e-830779198d25.jsonl",
+  "completionOwnerId": "12eb2e8c-9b8a-489b-a28e-0bab4c777cf9",
+  "mode": "single",
+  "state": "failed",
+  "steering": {
+    "requested": 0,
+    "scheduled": 0,
+    "pending": 0,
+    "delivered": 0,
+    "failed": 0,
+    "recovered": 0,
+    "recent": []
+  },
+  "lastActivityAt": 1790900251182,
+  "startedAt": 1790900210096,
+  "lastUpdate": 1790900251263,
+  "timeoutMs": 1800000,
+  "deadlineAt": 1790902009018,
+  "pid": 26782,
+  "pidNamespaceScope": "pid:[4026531836]",
+  "cwd": "/home/user/Projects/demo",
+  "currentStep": 0,
+  "chainStepCount": 1,
+  "parallelGroups": [],
+  "launchContractDigest": "fb2e0f9f56223e2ba17573944ee05575dba0ac3ead490fa8ca10cb255f83bb73",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:97eeeb3fa93e04b7"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:97eeeb3fa93e04b7"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "runFanoutBudget": {
+    "used": 1,
+    "limit": 64,
+    "remaining": 63
+  },
+  "processTerminal": {
+    "version": 1,
+    "state": "observed",
+    "runId": "6e642840-127a-4992-8b13-e60ec2d9d8d6",
+    "runnerProcessInstanceId": "8f0767bc-d08d-479e-a72e-4021690a8b6e",
+    "observedAt": 1790900251292,
+    "instances": [
+      {
+        "kind": "runner",
+        "processInstanceId": "8f0767bc-d08d-479e-a72e-4021690a8b6e",
+        "closeObservedAt": 1790900251292,
+        "exitCode": 0,
+        "signal": null
+      }
+    ],
+    "resumeDisposition": "resumable"
+  },
+  "steps": [
+    {
+      "agent": "researcher",
+      "sessionName": "researcher: demo task",
+      "description": "[prompt redacted]",
+      "context": "fresh",
+      "launchContractDigest": "fb2e0f9f56223e2ba17573944ee05575dba0ac3ead490fa8ca10cb255f83bb73",
+      "launchResolvedExtensions": {
+        "version": 1,
+        "source": "launch-resolved",
+        "disableAmbientExtensions": false,
+        "runtime": [
+          "sha256:97eeeb3fa93e04b7"
+        ],
+        "configured": [],
+        "required": [],
+        "effective": [
+          "sha256:97eeeb3fa93e04b7"
+        ],
+        "omitted": {
+          "runtime": 0,
+          "configured": 0,
+          "required": 0,
+          "effective": 0
+        }
+      },
+      "status": "failed",
+      "sessionFile": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-01T21-27-25-783Z_01a0f95d-7156-711c-b98e-830779198d25/dafd84bf-61d6-4e11-a9a5-79126441826a/run-0/session.jsonl",
+      "transcriptPath": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/subagent-artifacts/6e642840-127a-4992-8b13-e60ec2d9d8d6_researcher_transcript.jsonl",
+      "skills": [],
+      "model": "opencode-go/deepseek-v4.1-flash:max",
+      "contextLimit": 1000000,
+      "thinking": "max",
+      "requestedModel": "opencode-go/deepseek-v4.1-flash:max",
+      "processTerminal": {
+        "version": 1,
+        "runId": "6e642840-127a-4992-8b13-e60ec2d9d8d6",
+        "childIndex": 0,
+        "runnerProcessInstanceId": "8f0767bc-d08d-479e-a72e-4021690a8b6e",
+        "resumeDisposition": "resumable",
+        "state": "not-started"
+      },
+      "startedAt": 1790900210102,
+      "lastActivityAt": 1790900251182,
+      "turnCount": 4,
+      "tokens": {
+        "input": 6547,
+        "output": 4314,
+        "total": 10861,
+        "window": 6348,
+        "windowPeak": 6348
+      },
+      "toolCount": 5,
+      "endedAt": 1790900251261,
+      "durationMs": 41159,
+      "exitCode": 1,
+      "totalCost": {
+        "inputTokens": 6547,
+        "outputTokens": 4314,
+        "costUsd": 0.003611154
+      },
+      "error": "Agent 'researcher' requested unavailable child tools: web_search, fetch_content, get_search_content, source_check.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version.",
+      "effects": {
+        "settlementDiagnostic": {
+          "finalTextPresent": true,
+          "mutation": {
+            "attempted": false,
+            "observed": false
+          },
+          "afterCompactionSettlement": false
+        }
+      }
+    }
+  ],
+  "artifactsDir": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/subagent-artifacts",
+  "sessionDir": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-01T21-27-25-783Z_01a0f95d-7156-711c-b98e-830779198d25/dafd84bf-61d6-4e11-a9a5-79126441826a/async-6e642840-127a-4992-8b13-e60ec2d9d8d6",
+  "outputFile": "/tmp/pi-subagents-uid-1000/async-subagent-runs/6e642840-127a-4992-8b13-e60ec2d9d8d6/output-0.log",
+  "totalTokens": {
+    "input": 6547,
+    "output": 4314,
+    "total": 10861,
+    "window": 6348,
+    "windowPeak": 6348
+  },
+  "turnCount": 4,
+  "toolCount": 5,
+  "outputs": {},
+  "endedAt": 1790900251263,
+  "sessionFile": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-01T21-27-25-783Z_01a0f95d-7156-711c-b98e-830779198d25/dafd84bf-61d6-4e11-a9a5-79126441826a/run-0/session.jsonl",
+  "totalCost": {
+    "inputTokens": 6547,
+    "outputTokens": 4314,
+    "costUsd": 0.003611154
+  },
+  "error": "Agent 'researcher' requested unavailable child tools: web_search, fetch_content, get_search_content, source_check.\nThe `tools` field is a strict allowlist; it does not load extension code.\nFor extension tools, add the provider path to `subagentOnlyExtensions` (child-only), `extensions`, or as a path-like entry in `tools`, while keeping each registered tool name in `tools`.\nFor MCP tools, verify the MCP adapter configuration and selected tool names. For builtin tools, verify the name against the installed Pi version."
+}

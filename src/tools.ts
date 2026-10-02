@@ -1,0 +1,325 @@
+/**
+ * Model-facing riff tools (DESIGN §2 Tools): riff_spawn, riff_tell,
+ * riff_stop, riff_status. Each tool keeps the chat to one line via
+ * renderCall/renderResult while the full text still reaches the model.
+ */
+
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { defineTool } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, type Component } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+import { allocateName, parseName } from "./names.ts";
+import type { BridgeLike, Store } from "./store.ts";
+import { TERMINAL_STATES, type Voice } from "./types.ts";
+
+export interface VoiceToolDeps {
+	store: Store;
+	bridge: BridgeLike;
+}
+
+const SPAWN_FOLLOW_UP =
+	"The riffs run in the background and notify you when they finish. End your turn now; do not call bg_wait or poll.";
+
+const SPAWN_GUIDELINES = [
+	"Give every riff a short name that says its job.",
+	"The owner chooses models: pass model exactly as the owner named it and never invent a default.",
+	"Parallel riffs may read, but only one riff writes a given area.",
+	"Results arrive as notifications that start a new turn; never call bg_wait or poll for riffs, end your turn instead.",
+	"Answer a blocked riff's question, or escalate real product decisions to the owner.",
+];
+
+export function laneMode(role: string): "mutation" | "review" | "scout" | undefined {
+	switch (role) {
+		case "worker":
+		case "delegate":
+			return "mutation";
+		case "reviewer":
+		case "evidence-auditor":
+			return "review";
+		case "scout":
+		case "researcher":
+			return "scout";
+		default:
+			return undefined;
+	}
+}
+
+const SpawnVoiceParams = Type.Object({
+	name: Type.String({ minLength: 1, maxLength: 40, description: "Short riff name: lowercase letters, digits and dashes." }),
+	role: Type.String({ minLength: 1, description: "pi-subagents agent: worker, scout, reviewer, researcher, delegate, oracle, evidence-auditor." }),
+	task: Type.String({ minLength: 1, description: "Task for the riff; include everything it needs." }),
+	model: Type.Optional(Type.String({ description: "Model provider/id exactly as the owner named it. Omit to use the role default." })),
+	cwd: Type.Optional(Type.String({ description: "Working directory for the riff." })),
+});
+
+const VoiceSpawnParams = Type.Object({
+	riffs: Type.Array(SpawnVoiceParams, { minItems: 1, maxItems: 8, description: "One to eight riffs to launch in this call." }),
+});
+
+const VoiceTellParams = Type.Object({
+	name: Type.String({ minLength: 1, description: "Riff name from riff_spawn or riff_status." }),
+	message: Type.String({ minLength: 1, description: "Answer to a blocked riff, or new instruction." }),
+	mode: Type.Optional(Type.String({ enum: ["steer", "follow_up"], description: "steer interrupts the current turn, follow_up queues after it. Default steer." })),
+});
+
+const VoiceStopParams = Type.Object({
+	name: Type.String({ minLength: 1, description: "Riff name to stop." }),
+});
+
+const VoiceStatusParams = Type.Object({
+	name: Type.Optional(Type.String({ description: "Riff name; omit for the whole roster." })),
+});
+
+interface SpawnReply {
+	isError?: boolean;
+	content?: Array<{ type?: string; text?: string }>;
+	details?: { runId?: unknown; asyncDir?: unknown };
+}
+
+interface SpawnResult {
+	name: string;
+	role: string;
+	state: "started" | "failed";
+	runId?: string;
+}
+
+interface SpawnDetails {
+	action: "spawn";
+	started: number;
+	voices: SpawnResult[];
+}
+
+interface StatusDetails {
+	action: "status";
+	count?: number;
+	name?: string;
+}
+
+export function createVoiceTools(getDeps: () => VoiceToolDeps | undefined): Array<ToolDefinition<any, any, any>> {
+	function deps(): VoiceToolDeps {
+		const value = getDeps();
+		if (!value) throw new Error("Fugue has no active session.");
+		return value;
+	}
+
+	const spawn = defineTool({
+		name: "riff_spawn",
+		label: "Spawn riffs",
+		description: "Launch one or more named background riffs (pi-subagents children, Fugue's subagents) and show them on the Score.",
+		promptGuidelines: SPAWN_GUIDELINES,
+		parameters: VoiceSpawnParams,
+		async execute(_toolCallId, params) {
+			const { store, bridge } = deps();
+			const lines: string[] = [];
+			const results: SpawnResult[] = [];
+			for (const request of params.riffs) {
+				const parsed = parseName(request.name);
+				if (!parsed.ok) {
+					lines.push(`${request.name}  ${request.role}  error: ${parsed.error}`);
+					results.push({ name: request.name, role: request.role, state: "failed" });
+					continue;
+				}
+				const name = allocateName(parsed.name, (candidate) => store.voiceByName(candidate) !== undefined);
+				const role = request.role.trim();
+				const lane: Record<string, unknown> = { version: 1, key: name };
+				const mode = laneMode(role);
+				if (mode) lane.mode = mode;
+				try {
+					const data = await bridge.request<SpawnReply>("spawn", {
+						agent: role,
+						task: request.task,
+						...(request.model ? { model: request.model } : {}),
+						...(request.cwd ? { cwd: request.cwd } : {}),
+						lane,
+					});
+					const runId = typeof data?.details?.runId === "string" ? data.details.runId : undefined;
+					if (!runId) throw new Error(spawnFailure(data));
+					store.registerVoice({
+						runId,
+						name,
+						role,
+						...(request.model ? { model: request.model } : {}),
+						task: request.task,
+						origin: "fugue",
+						...(typeof data.details?.asyncDir === "string" ? { asyncDir: data.details.asyncDir } : {}),
+					});
+					lines.push(`${name}  ${role}  ${request.model ?? "default model"}  started  run ${runId}`);
+					results.push({ name, role, state: "started", runId });
+				} catch (error) {
+					lines.push(`${name}  ${role}  error: ${errorMessage(error)}`);
+					results.push({ name, role, state: "failed" });
+				}
+			}
+			const started = results.filter((result) => result.state === "started").length;
+			return {
+				content: [{ type: "text" as const, text: [...lines, ...(started > 0 ? [SPAWN_FOLLOW_UP] : [])].join("\n") }],
+				details: { action: "spawn", started, voices: results } satisfies SpawnDetails,
+				...(started === 0 ? { isError: true } : {}),
+			};
+		},
+		renderCall(args, theme) {
+			const names = args.riffs.map((voice) => `${voice.name} ${voice.role}`).join(" · ");
+			return oneLine(theme.fg("accent", "riff_spawn") + " " + theme.fg("text", names));
+		},
+		renderResult(result, _options, theme) {
+			const details = result.details as SpawnDetails | undefined;
+			const started = details?.started ?? 0;
+			const text = `${started} riff${started === 1 ? "" : "s"} started`;
+			return oneLine(theme.fg(started > 0 ? "success" : "error", text));
+		},
+	});
+
+	const tell = defineTool({
+		name: "riff_tell",
+		label: "Tell riff",
+		description: "Send an answer or instruction to a riff: steer it while running, resume it once settled.",
+		parameters: VoiceTellParams,
+		async execute(_toolCallId, params) {
+			const { store } = deps();
+			const voice = store.voiceByName(params.name);
+			if (!voice) throw unknownVoice(store, params.name);
+			const mode = params.mode === "follow_up" ? "follow_up" : "steer";
+			const result = await store.tell(voice.runId, params.message, mode);
+			return { content: [{ type: "text" as const, text: result }], details: { action: "tell", name: voice.name } };
+		},
+		renderCall(args, theme) {
+			return oneLine(theme.fg("accent", "riff_tell") + " " + theme.fg("text", args.name));
+		},
+		renderResult(result, _options, theme) {
+			return oneLine(theme.fg(result.isError ? "error" : "text", firstResultLine(result)));
+		},
+	});
+
+	const stop = defineTool({
+		name: "riff_stop",
+		label: "Stop riff",
+		description: "Stop a running riff.",
+		parameters: VoiceStopParams,
+		async execute(_toolCallId, params) {
+			const { store } = deps();
+			const voice = store.voiceByName(params.name);
+			if (!voice) throw unknownVoice(store, params.name);
+			const result = await store.stop(voice.runId);
+			return { content: [{ type: "text" as const, text: result }], details: { action: "stop", name: voice.name } };
+		},
+		renderCall(args, theme) {
+			return oneLine(theme.fg("accent", "riff_stop") + " " + theme.fg("text", args.name));
+		},
+		renderResult(result, _options, theme) {
+			return oneLine(theme.fg(result.isError ? "error" : "text", firstResultLine(result)));
+		},
+	});
+
+	const status = defineTool<typeof VoiceStatusParams, StatusDetails>({
+		name: "riff_status",
+		label: "Riff status",
+		description: "List the session's riffs, or show one riff in detail.",
+		parameters: VoiceStatusParams,
+		async execute(_toolCallId, params) {
+			const { store } = deps();
+			const name = params.name?.trim() ?? "";
+			if (!name) {
+				const snapshot = store.snapshot();
+				const text = snapshot.voices.length === 0
+					? "no riffs"
+					: snapshot.voices.map((voice) => rosterLine(voice, Date.now())).join("\n");
+				return { content: [{ type: "text" as const, text }], details: { action: "status", count: snapshot.voices.length } satisfies StatusDetails };
+			}
+			const voice = store.voiceByName(name);
+			if (!voice) throw unknownVoice(store, name);
+			return { content: [{ type: "text" as const, text: voiceDetail(voice, Date.now()) }], details: { action: "status", name: voice.name } satisfies StatusDetails };
+		},
+		renderCall(args, theme) {
+			return oneLine(theme.fg("accent", "riff_status") + (args.name ? " " + theme.fg("text", args.name) : ""));
+		},
+		renderResult(result, _options, theme) {
+			return oneLine(theme.fg(result.isError ? "error" : "text", firstResultLine(result)));
+		},
+	});
+
+	return [spawn, tell, stop, status];
+}
+
+export function registerVoiceTools(pi: ExtensionAPI, getDeps: () => VoiceToolDeps | undefined): void {
+	for (const tool of createVoiceTools(getDeps)) pi.registerTool(tool);
+}
+
+function spawnFailure(data: SpawnReply | undefined): string {
+	const text = data?.content?.find((part) => part.type === "text")?.text;
+	return text ?? "spawn failed";
+}
+
+function unknownVoice(store: Store, name: string): Error {
+	const known = [...new Set(store.snapshot().voices.map((voice) => voice.name))];
+	const suffix = known.length > 0 ? `Known riffs: ${known.join(", ")}` : "No riffs in this session.";
+	return new Error(`Unknown riff "${name}". ${suffix}`);
+}
+
+function firstResultLine(result: { content: Array<{ type: string; text?: string }> }): string {
+	const text = result.content.find((part) => part.type === "text")?.text ?? "";
+	return text.split("\n")[0] ?? "";
+}
+
+function oneLine(text: string): Component {
+	return {
+		render: (width: number) => [truncateToWidth(text, width)],
+		invalidate() {},
+	};
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
+}
+
+function rosterLine(voice: Voice, now: number): string {
+	const parts = [voice.name, voice.role, voice.state];
+	if (voice.activity) {
+		parts.push(voice.activity.detail ? `${voice.activity.kind} ${voice.activity.detail}` : voice.activity.kind);
+	}
+	const elapsed = elapsedLabel(voice, now);
+	if (elapsed) parts.push(elapsed);
+	if (voice.tokens) parts.push(tokenLabel(voice.tokens.total));
+	if (voice.costUsd !== undefined) parts.push(`$${voice.costUsd.toFixed(2)}`);
+	return parts.join("  ");
+}
+
+function voiceDetail(voice: Voice, now: number): string {
+	const lines = [`${voice.name}  ${voice.role}  ${voice.state}`];
+	if (voice.model) lines.push(`model: ${voice.model}`);
+	if (voice.thinking) lines.push(`thinking: ${voice.thinking}`);
+	if (voice.activity) lines.push(`activity: ${voice.activity.kind}${voice.activity.detail ? ` ${voice.activity.detail}` : ""}`);
+	const elapsed = elapsedLabel(voice, now);
+	if (elapsed) lines.push(`elapsed: ${elapsed}`);
+	if (voice.tokens) lines.push(`tokens: ${voice.tokens.input} in / ${voice.tokens.output} out (${voice.tokens.total})`);
+	if (voice.costUsd !== undefined) lines.push(`cost: $${voice.costUsd.toFixed(4)}`);
+	if (voice.question) lines.push(`question: ${voice.question.message}`);
+	if (voice.task) lines.push(`task: ${voice.task}`);
+	if (voice.summary) lines.push(`summary: ${voice.summary}`);
+	if (voice.error) lines.push(`error: ${voice.error}`);
+	lines.push(`run: ${voice.runId}`);
+	return lines.join("\n");
+}
+
+function elapsedLabel(voice: Voice, now: number): string | undefined {
+	if (!voice.startedAt) return undefined;
+	if (voice.endedAt) return duration(voice.endedAt - voice.startedAt);
+	if (TERMINAL_STATES.has(voice.state)) return undefined;
+	return duration(now - voice.startedAt);
+}
+
+function tokenLabel(total: number): string {
+	if (total >= 1_000_000) return `${+(total / 1_000_000).toFixed(1)}M`;
+	if (total >= 1_000) return `${Math.round(total / 1_000)}k`;
+	return `${total}`;
+}
+
+function duration(ms: number): string {
+	const seconds = Math.max(0, Math.round(ms / 1000));
+	if (seconds < 60) return `${seconds}s`;
+	const minutes = Math.floor(seconds / 60);
+	const rest = seconds % 60;
+	if (minutes < 60) return rest ? `${minutes}m${rest}s` : `${minutes}m`;
+	const hours = Math.floor(minutes / 60);
+	const tail = minutes % 60;
+	return tail ? `${hours}h${tail}m` : `${hours}h`;
+}

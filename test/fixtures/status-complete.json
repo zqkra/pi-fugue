@@ -1,0 +1,161 @@
+{
+  "lifecycleArtifactVersion": 3,
+  "runId": "0a6bb1f0-5767-494f-9f5c-19d7c99fde76",
+  "sessionId": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-02T08-13-54-863Z_01a0fbad-512d-74e9-974d-3e2859a7e937.jsonl",
+  "completionOwnerId": "210b0059-c4c0-4706-8215-425909e82d60",
+  "mode": "single",
+  "state": "complete",
+  "steering": {
+    "requested": 0,
+    "scheduled": 0,
+    "pending": 0,
+    "delivered": 0,
+    "failed": 0,
+    "recovered": 0,
+    "recent": []
+  },
+  "lastActivityAt": 1790928844578,
+  "startedAt": 1790928839289,
+  "lastUpdate": 1790928844610,
+  "timeoutMs": 1800000,
+  "deadlineAt": 1790930637897,
+  "pid": 542295,
+  "pidNamespaceScope": "pid:[4026531836]",
+  "cwd": "/home/user/Projects/demo",
+  "currentStep": 0,
+  "chainStepCount": 1,
+  "parallelGroups": [],
+  "launchContractDigest": "2534505366c29c1a3f595a5c27cbd714bd0bc4dc915a3e0e6760503331e66d45",
+  "launchResolvedExtensions": {
+    "version": 1,
+    "source": "launch-resolved",
+    "disableAmbientExtensions": false,
+    "runtime": [
+      "sha256:97eeeb3fa93e04b7"
+    ],
+    "configured": [],
+    "required": [],
+    "effective": [
+      "sha256:97eeeb3fa93e04b7"
+    ],
+    "omitted": {
+      "runtime": 0,
+      "configured": 0,
+      "required": 0,
+      "effective": 0
+    }
+  },
+  "runFanoutBudget": {
+    "used": 1,
+    "limit": 64,
+    "remaining": 63
+  },
+  "lane": {
+    "version": 1,
+    "key": "probe-voice",
+    "mode": "scout"
+  },
+  "processTerminal": {
+    "version": 1,
+    "state": "observed",
+    "runId": "0a6bb1f0-5767-494f-9f5c-19d7c99fde76",
+    "runnerProcessInstanceId": "31ab7e1f-db48-41f4-afc4-3587afae0b2b",
+    "observedAt": 1790928844651,
+    "instances": [
+      {
+        "kind": "runner",
+        "processInstanceId": "31ab7e1f-db48-41f4-afc4-3587afae0b2b",
+        "closeObservedAt": 1790928844651,
+        "exitCode": 0,
+        "signal": null
+      }
+    ],
+    "resumeDisposition": "resumable"
+  },
+  "steps": [
+    {
+      "agent": "scout",
+      "lane": {
+        "version": 1,
+        "key": "probe-voice",
+        "mode": "scout"
+      },
+      "sessionName": "scout: demo task",
+      "description": "[prompt redacted]",
+      "context": "fresh",
+      "launchContractDigest": "2534505366c29c1a3f595a5c27cbd714bd0bc4dc915a3e0e6760503331e66d45",
+      "launchResolvedExtensions": {
+        "version": 1,
+        "source": "launch-resolved",
+        "disableAmbientExtensions": false,
+        "runtime": [
+          "sha256:97eeeb3fa93e04b7"
+        ],
+        "configured": [],
+        "required": [],
+        "effective": [
+          "sha256:97eeeb3fa93e04b7"
+        ],
+        "omitted": {
+          "runtime": 0,
+          "configured": 0,
+          "required": 0,
+          "effective": 0
+        }
+      },
+      "status": "complete",
+      "sessionFile": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-02T08-13-54-863Z_01a0fbad-512d-74e9-974d-3e2859a7e937/8ddb1415-6b60-4953-89c3-ddbe4538ea67/run-0/session.jsonl",
+      "transcriptPath": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/subagent-artifacts/0a6bb1f0-5767-494f-9f5c-19d7c99fde76_scout_transcript.jsonl",
+      "skills": [],
+      "model": "opencode-go/deepseek-v4.1-flash:low",
+      "contextLimit": 1000000,
+      "thinking": "low",
+      "requestedModel": "opencode-go/deepseek-v4.1-flash:low",
+      "processTerminal": {
+        "version": 1,
+        "runId": "0a6bb1f0-5767-494f-9f5c-19d7c99fde76",
+        "childIndex": 0,
+        "runnerProcessInstanceId": "31ab7e1f-db48-41f4-afc4-3587afae0b2b",
+        "resumeDisposition": "resumable",
+        "state": "not-started"
+      },
+      "startedAt": 1790928839296,
+      "lastActivityAt": 1790928844578,
+      "turnCount": 1,
+      "tokens": {
+        "input": 2848,
+        "output": 528,
+        "total": 3376,
+        "window": 2848,
+        "windowPeak": 2848
+      },
+      "endedAt": 1790928844607,
+      "durationMs": 5311,
+      "exitCode": 0,
+      "totalCost": {
+        "inputTokens": 2848,
+        "outputTokens": 528,
+        "costUsd": 0.000744
+      }
+    }
+  ],
+  "artifactsDir": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/subagent-artifacts",
+  "sessionDir": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-02T08-13-54-863Z_01a0fbad-512d-74e9-974d-3e2859a7e937/8ddb1415-6b60-4953-89c3-ddbe4538ea67/async-0a6bb1f0-5767-494f-9f5c-19d7c99fde76",
+  "outputFile": "/tmp/pi-subagents-uid-1000/async-subagent-runs/0a6bb1f0-5767-494f-9f5c-19d7c99fde76/output-0.log",
+  "totalTokens": {
+    "input": 2848,
+    "output": 528,
+    "total": 3376,
+    "window": 2848,
+    "windowPeak": 2848
+  },
+  "turnCount": 1,
+  "outputs": {},
+  "endedAt": 1790928844610,
+  "sessionFile": "/home/user/.pi/agent/sessions/--home-user-Projects-demo--/2026-10-02T08-13-54-863Z_01a0fbad-512d-74e9-974d-3e2859a7e937/8ddb1415-6b60-4953-89c3-ddbe4538ea67/run-0/session.jsonl",
+  "totalCost": {
+    "inputTokens": 2848,
+    "outputTokens": 528,
+    "costUsd": 0.000744
+  }
+}
