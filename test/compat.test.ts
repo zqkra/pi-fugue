@@ -74,7 +74,7 @@ test("validateStatusShape names every drifted field", async () => {
 		[
 			"lifecycleArtifactVersion is 2 (expected 3)",
 			"pid is missing",
-			"lane.key is missing",
+			"lane.key is malformed",
 			"steps[0].tokens.window is missing",
 			"steps[0].contextLimit is missing",
 			"steps[0].recentTools is missing",
@@ -86,9 +86,10 @@ test("validateStatusShape names every drifted field", async () => {
 	assert.deepEqual(validateStatusShape({ state: "running" }), [
 		"lifecycleArtifactVersion is missing (expected 3)",
 		"pid is missing",
-		"lane.key is missing",
 		"steps[0] is missing",
 	]);
+	// Plain `subagent` runs carry no lane; that is not drift.
+	assert.deepEqual(validateStatusShape({ ...status, lane: undefined }), []);
 	assert.deepEqual(validateStatusShape("no"), ["status.json is not an object"]);
 });
 
@@ -122,7 +123,6 @@ test("checkCompatibility reports rpc, version and status drift together", async 
 			"rpc is missing capabilities: asyncSpawn, steer, stop, resume",
 			"newest status.json: lifecycleArtifactVersion is 2 (expected 3)",
 			"newest status.json: pid is missing",
-			"newest status.json: lane.key is missing",
 			"newest status.json: steps[0] is missing",
 		]);
 	} finally {
@@ -149,7 +149,6 @@ test("checkCompatibility reads the newest status.json by mtime", async () => {
 		assert.deepEqual(report.problems, [
 			"newest status.json: lifecycleArtifactVersion is missing (expected 3)",
 			"newest status.json: pid is missing",
-			"newest status.json: lane.key is missing",
 			"newest status.json: steps[0] is missing",
 		]);
 	} finally {

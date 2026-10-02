@@ -85,7 +85,7 @@ export function validatePing(payload: unknown): string[] {
 
 /**
  * Problems with the `status.json` shape Fugue reads: lifecycle artifact
- * version plus the state, lane, pid and step fields the Score needs. Pure.
+ * version plus the state, pid and step fields the Score needs, and lane when present. Pure.
  */
 export function validateStatusShape(status: unknown): string[] {
 	if (!isRecord(status)) return ["status.json is not an object"];
@@ -95,7 +95,8 @@ export function validateStatusShape(status: unknown): string[] {
 	}
 	if (typeof status.state !== "string") problems.push("state is missing");
 	if (typeof status.pid !== "number") problems.push("pid is missing");
-	if (!isRecord(status.lane) || typeof status.lane.key !== "string") problems.push("lane.key is missing");
+	// `lane` is optional: plain `subagent` runs have none. Riffs set it, and its shape must hold when present.
+	if (status.lane !== undefined && (!isRecord(status.lane) || typeof status.lane.key !== "string")) problems.push("lane.key is malformed");
 	const steps = Array.isArray(status.steps) ? status.steps : [];
 	const step = steps.length > 0 && isRecord(steps[0]) ? steps[0] : undefined;
 	if (!step) {
