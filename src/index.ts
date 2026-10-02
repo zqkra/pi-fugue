@@ -7,6 +7,7 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Bridge } from "./bridge.ts";
+import { watchCompatibility } from "./compat.ts";
 import { registerCommands } from "./commands.ts";
 import { registerGates } from "./gates.ts";
 import { registerNoticeRenderer, startNotices } from "./notices.ts";
@@ -75,6 +76,7 @@ export default function (pi: ExtensionAPI) {
 			pi.events.on("subagent:process-terminal", (event) => store.onProcessTerminal(event as ProcessTerminalPayload)),
 		];
 		void store.refreshAll();
+		watchCompatibility(pi, activeBridge, ctx);
 	});
 
 	// Keep the chat free while children work (src/free-chat.ts). Headless runs are left alone:

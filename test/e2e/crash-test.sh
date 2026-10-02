@@ -7,6 +7,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 HARNESS="$ROOT/test/e2e/harness.ts"
+# Hermetic: an installed Fugue in the owner's settings would conflict with this harness.
+SUBAGENTS_EXT="${PI_SUBAGENTS_EXT:-${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/npm/node_modules/pi-subagents/index.js}"
+[ -f "$SUBAGENTS_EXT" ] || { echo "pi-subagents not found at $SUBAGENTS_EXT; set PI_SUBAGENTS_EXT" >&2; exit 1; }
 TMP="$(mktemp -d /tmp/fugue-e2e-crash.XXXXXX)"
 SESSION_DIR="$TMP/sessions"
 CONDUCTOR_MODEL="${FUGUE_E2E_CONDUCTOR_MODEL:-opencode-go/deepseek-v4.1-flash}"
@@ -17,8 +20,8 @@ echo "== crash test in $TMP"
 
 # 1. Conductor whose first turn spawns a sleeping background voice, then holds.
 env FUGUE_E2E_DIR="$TMP" FUGUE_E2E_SPAWN=1 FUGUE_E2E_HOLD_MS=60000 \
-	pi -p "say ok" --session-dir "$SESSION_DIR" --model "$CONDUCTOR_MODEL" --thinking low \
-	-e "$HARNESS" < /dev/null > "$TMP/first.out" 2> "$TMP/first.err" &
+	pi -ne -p "say ok" --session-dir "$SESSION_DIR" --model "$CONDUCTOR_MODEL" --thinking low \
+	-e "$SUBAGENTS_EXT" -e "$HARNESS" < /dev/null > "$TMP/first.out" 2> "$TMP/first.err" &
 CONDUCTOR_PID=$!
 echo "conductor pid=$CONDUCTOR_PID"
 
@@ -62,8 +65,8 @@ echo "session=$SESSION_FILE"
 
 # 3. First resume: the grace scan must deliver exactly one notice and mark the payload.
 env FUGUE_E2E_DIR="$TMP" FUGUE_E2E_HOLD_MS=12000 \
-	pi -p "say ok" --session "$SESSION_FILE" --model "$CONDUCTOR_MODEL" --thinking low \
-	-e "$HARNESS" < /dev/null > "$TMP/resume1.out" 2> "$TMP/resume1.err"
+	pi -ne -p "say ok" --session "$SESSION_FILE" --model "$CONDUCTOR_MODEL" --thinking low \
+	-e "$SUBAGENTS_EXT" -e "$HARNESS" < /dev/null > "$TMP/resume1.out" 2> "$TMP/resume1.err"
 echo "resume 1 done"
 python3 - "$SESSION_FILE" "$RUN_ID" "$RESULT_FILE" <<'PY'
 import json, sys
@@ -81,8 +84,8 @@ PY
 
 # 4. Second resume: no second notice.
 env FUGUE_E2E_DIR="$TMP" FUGUE_E2E_HOLD_MS=10000 \
-	pi -p "say ok" --session "$SESSION_FILE" --model "$CONDUCTOR_MODEL" --thinking low \
-	-e "$HARNESS" < /dev/null > "$TMP/resume2.out" 2> "$TMP/resume2.err"
+	pi -ne -p "say ok" --session "$SESSION_FILE" --model "$CONDUCTOR_MODEL" --thinking low \
+	-e "$SUBAGENTS_EXT" -e "$HARNESS" < /dev/null > "$TMP/resume2.out" 2> "$TMP/resume2.err"
 python3 - "$SESSION_FILE" "$RUN_ID" <<'PY'
 import json, sys
 session, run_id = sys.argv[1:3]

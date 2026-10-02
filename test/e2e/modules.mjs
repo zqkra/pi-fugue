@@ -31,7 +31,10 @@ const pi = {
 const bridge = {
 	async request(method) {
 		assert.equal(method, "ping");
-		return { methods: ["ping", "spawn", "status", "steer", "stop", "resume"] };
+		return {
+			methods: ["ping", "spawn", "status", "steer", "stop", "resume"],
+			capabilities: { asyncSpawn: true, steer: true, stop: true, resume: true },
+		};
 	},
 };
 const store = new Store({
@@ -55,7 +58,7 @@ assert.match(report, /pi-subagents: \d+\.\d+\.\d+/);
 assert.match(report, /rpc ping: ok \(ping,spawn,status,steer,stop,resume\)/);
 assert.match(report, /fleetView: (true|false)/);
 assert.match(report, /temp root: \//);
-assert.match(report, /voices: 0 \(0 active\)/);
+assert.match(report, /riffs: 0 \(0 active\)/);
 assert.match(report, /poll timer: idle/);
 assert.match(report, /owner ids: \d+/);
 console.log("PASS /fugue doctor");
