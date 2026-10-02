@@ -367,3 +367,69 @@ test("parseWorktreeCopy reads the config and rejects every malformed shape", () 
 	assert.match(parseWorktreeCopy('{"worktree":3}').error ?? "", /"worktree" must be an object/);
 	assert.match(parseWorktreeCopy('{"worktree":{"copy":[1]}}').error ?? "", /array of strings/);
 });
+
+test("merge refuses while the owner is mid-merge and leaves that merge exactly as it was", async () => {
+	await withRepo(async (repo) => {
+		const { setup } = await prepare(repo, "auth");
+		await commitInWorktree(setup.worktree, "feature.txt", "riff", "riff work");
+		// The owner is resolving their own conflict in the main checkout.
+		git(repo, "checkout", "-qb", "side");
+		await writeFile(join(repo, "app.txt"), "side\n");
+		git(repo, "commit", "-qam", "side");
+		git(repo, "checkout", "-q", "main");
+		await writeFile(join(repo, "app.txt"), "main\n");
+		git(repo, "commit", "-qam", "main");
+		assert.notEqual(gitTry(repo, "merge", "side").status, 0);
+		const before = git(repo, "status", "--porcelain");
+		const outcome = await mergeRiffWorktree({ worktree: setup.worktree, name: "auth" });
+		assert.equal(outcome.ok, false);
+		assert.match(outcome.reason ?? "", /in the middle of a merge/);
+		assert.equal(git(repo, "status", "--porcelain"), before, "the owner's merge state is untouched");
+		assert.ok(existsSync(join(repo, ".git", "MERGE_HEAD")));
+	});
+});
+
+test("merge refuses with staged changes in the main checkout and keeps them staged", async () => {
+	await withRepo(async (repo) => {
+		const { setup } = await prepare(repo, "auth");
+		await commitInWorktree(setup.worktree, "feature.txt", "riff", "riff work");
+		await writeFile(join(repo, "notes.txt"), "staged by the owner\n");
+		git(repo, "add", "notes.txt");
+		const outcome = await mergeRiffWorktree({ worktree: setup.worktree, name: "auth" });
+		assert.equal(outcome.ok, false);
+		assert.match(outcome.reason ?? "", /staged changes \(notes\.txt\)/);
+		assert.equal(git(repo, "diff", "--cached", "--name-only").trim(), "notes.txt");
+		assert.ok(existsSync(setup.worktree.path), "nothing was cleaned up");
+	});
+});
+
+test("a failed merge that never started touches nothing", async () => {
+	await withRepo(async (repo) => {
+		const { setup } = await prepare(repo, "auth");
+		await commitInWorktree(setup.worktree, "feature.txt", "riff", "riff work");
+		// An untracked file in the main checkout that the branch would overwrite.
+		await writeFile(join(repo, "feature.txt"), "owner draft\n");
+		await writeFile(join(repo, "app.txt"), "owner edit\n");
+		const outcome = await mergeRiffWorktree({ worktree: setup.worktree, name: "auth" });
+		assert.equal(outcome.ok, false);
+		assert.equal(git(repo, "show", "HEAD:app.txt"), "one\n");
+		assert.equal(git(repo, "status", "--porcelain").split("\n").filter(Boolean).sort().join("|"), " M app.txt|?? feature.txt");
+	});
+});
+
+test("merges into one repository run one at a time", async () => {
+	await withRepo(async (repo) => {
+		const a = (await prepare(repo, "a")).setup.worktree;
+		const b = (await prepare(repo, "b")).setup.worktree;
+		await commitInWorktree(a, "a.txt", "a", "a work");
+		await commitInWorktree(b, "b.txt", "b", "b work");
+		const [first, second] = await Promise.all([
+			mergeRiffWorktree({ worktree: a, name: "a" }),
+			mergeRiffWorktree({ worktree: b, name: "b" }),
+		]);
+		assert.equal(first.ok, true, first.reason);
+		assert.equal(second.ok, true, second.reason);
+		assert.equal(git(repo, "show", "HEAD:a.txt"), "a\n");
+		assert.equal(git(repo, "show", "HEAD:b.txt"), "b\n");
+	});
+});

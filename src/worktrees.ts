@@ -350,11 +350,52 @@ async function overlappingDirtyFiles(worktree: RiffWorktree): Promise<string[]> 
 	return changed.filter((path) => dirty.has(path));
 }
 
-async function abortMerge(repoRoot: string): Promise<void> {
+/** Git operations a person may be in the middle of; Fugue never merges over one. */
+const IN_PROGRESS = [
+	["MERGE_HEAD", "a merge"],
+	["CHERRY_PICK_HEAD", "a cherry-pick"],
+	["REVERT_HEAD", "a revert"],
+	["rebase-merge", "a rebase"],
+	["rebase-apply", "a rebase or am"],
+	["BISECT_LOG", "a bisect"],
+] as const;
+
+async function operationInProgress(repoRoot: string): Promise<string | undefined> {
+	const gitDir = await runGit(repoRoot, ["rev-parse", "--absolute-git-dir"]);
+	if (gitDir.code !== 0) return "the git directory could not be read";
+	const dir = gitDir.stdout.trim();
+	for (const [marker, label] of IN_PROGRESS) {
+		if (await pathExists(join(dir, marker))) return label;
+	}
+	return undefined;
+}
+
+/**
+ * Undo a merge Fugue itself started and nothing else. Preconditions guarantee
+ * no staged changes and no prior operation, so `merge --abort` (or, for a
+ * conflicted squash, `reset --merge`) only rewinds Fugue's own merge; the
+ * owner's unstaged edits to other files are kept by both.
+ */
+async function abortOwnMerge(repoRoot: string): Promise<void> {
 	const abort = await runGit(repoRoot, ["merge", "--abort"]);
-	// A squash merge that conflicted has no MERGE_HEAD, so `--abort` refuses;
-	// `reset --merge` restores the same pre-merge state without touching other dirty files.
-	if (abort.code !== 0) await runGit(repoRoot, ["reset", "--merge"]);
+	if (abort.code !== 0 && (await gitPaths(repoRoot, ["diff", "--name-only", "--diff-filter=U", "-z"])).length > 0) {
+		await runGit(repoRoot, ["reset", "--merge"]);
+	}
+}
+
+/** One merge or discard per repository at a time, in this process. */
+const repoLocks = new Map<string, Promise<unknown>>();
+
+function withRepoLock<T>(repoRoot: string, work: () => Promise<T>): Promise<T> {
+	const previous = repoLocks.get(repoRoot) ?? Promise.resolve();
+	const next = previous.then(work, work);
+	repoLocks.set(
+		repoRoot,
+		next.catch(() => {}).finally(() => {
+			if (repoLocks.get(repoRoot) === next) repoLocks.delete(repoRoot);
+		}),
+	);
+	return next;
 }
 
 function listFiles(files: readonly string[]): string {
@@ -387,18 +428,30 @@ export interface MergeOutcome {
  * files in the main checkout overlap what the branch changes; on conflict the
  * merge is aborted and the checkout is left as it was.
  */
-export async function mergeRiffWorktree(options: {
+export function mergeRiffWorktree(options: {
 	worktree: RiffWorktree;
 	name: string;
 	squash?: boolean;
 	keep?: boolean;
 }): Promise<MergeOutcome> {
+	return withRepoLock(options.worktree.repoRoot, () => mergeLocked(options));
+}
+
+async function mergeLocked(options: { worktree: RiffWorktree; name: string; squash?: boolean; keep?: boolean }): Promise<MergeOutcome> {
 	const { worktree, name } = options;
 	const warnings: string[] = [];
 	const failure = (reason: string): MergeOutcome => ({ ok: false, commits: 0, files: 0, reason, warnings });
 	if (worktree.status !== "active") return failure(`worktree is already ${worktree.status}`);
 	if (!(await pathExists(worktree.path))) {
 		return failure(`worktree folder ${worktree.path} is gone; branch ${worktree.branch} still holds the work`);
+	}
+	// Never touch a checkout the owner is in the middle of, or one with staged work:
+	// both would make undoing a failed merge unsafe for their changes.
+	const busy = await operationInProgress(worktree.repoRoot);
+	if (busy) return failure(`${worktree.repoRoot} is in the middle of ${busy}; finish or abort it, then merge`);
+	const stagedInMain = await gitPaths(worktree.repoRoot, ["diff", "--name-only", "--cached", "-z"]);
+	if (stagedInMain.length > 0) {
+		return failure(`${worktree.repoRoot} has staged changes (${listFiles(stagedInMain)}); commit or unstage them, then merge`);
 	}
 	const leftover = await commitSettledWork(worktree, name, "merge");
 	if (leftover.warning) warnings.push(leftover.warning);
@@ -412,7 +465,7 @@ export async function mergeRiffWorktree(options: {
 		: await runGit(worktree.repoRoot, ["merge", "--no-ff", "-m", `merge ${worktree.branch}`, worktree.branch]);
 	if (merge.code !== 0) {
 		const conflicts = await conflictingPaths(worktree.repoRoot);
-		await abortMerge(worktree.repoRoot);
+		await abortOwnMerge(worktree.repoRoot);
 		const detail = conflicts.length > 0 ? `conflicts in ${listFiles(conflicts)}` : firstLine(merge.stderr) || `exit ${merge.code}`;
 		return failure(`merge did not apply: ${detail}`);
 	}
@@ -433,7 +486,11 @@ export interface DiscardOutcome {
 }
 
 /** Remove the worktree folder; the branch stays unless `deleteBranch`. Never rejects. */
-export async function discardRiffWorktree(options: { worktree: RiffWorktree; deleteBranch?: boolean }): Promise<DiscardOutcome> {
+export function discardRiffWorktree(options: { worktree: RiffWorktree; deleteBranch?: boolean }): Promise<DiscardOutcome> {
+	return withRepoLock(options.worktree.repoRoot, () => discardLocked(options));
+}
+
+async function discardLocked(options: { worktree: RiffWorktree; deleteBranch?: boolean }): Promise<DiscardOutcome> {
 	const { worktree } = options;
 	const warnings: string[] = [];
 	let removed = !(await pathExists(worktree.path));

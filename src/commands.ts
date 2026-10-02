@@ -10,6 +10,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { checkCompatibility, piSubagentsVersion } from "./compat.ts";
 import { ownerIds } from "./owners.ts";
+import { activeWorktreeLines } from "./worktrees.ts";
 import { tempRoot } from "./paths.ts";
 import type { BridgeLike, Store } from "./store.ts";
 import { TERMINAL_STATES } from "./types.ts";
@@ -74,6 +75,7 @@ async function doctorReport(deps: CommandDeps): Promise<string> {
 	lines.push(`riffs: ${snapshot.voices.length} (${active} active)`);
 	lines.push(`poll timer: ${deps.store.polling() ? "running" : "idle"}`);
 	lines.push(`owner ids: ${ownerIds().size}`);
+	lines.push(...(await activeWorktreeLines(snapshot.voices)));
 	return lines.join("\n");
 }
 
