@@ -257,8 +257,12 @@ function drawCard(
 	canvas.text(cx + 2, y + 1, name, "text", true);
 	if (role) canvas.text(cx + inner - visibleWidth(role), y + 1, role, "muted");
 
+	// An isolated writer carries ⎇ (its own branch); the branch leaf shows only when it differs from the name.
+	const branch = worktreeMark(voice);
+	const branchWidth = branch ? visibleWidth(branch.text) + 1 : 0;
 	const model = voice.model ? modelLabel(voice.model) : "no model";
-	canvas.text(cx, y + 2, clip(model, inner), voice.model ? "text" : "muted");
+	canvas.text(cx, y + 2, clip(model, Math.max(1, inner - branchWidth)), voice.model ? "text" : "muted");
+	if (branch) canvas.text(cx + inner - visibleWidth(branch.text), y + 2, branch.text, branch.color);
 
 	const ms = voiceDuration(voice, options.now);
 	const time = ms !== undefined && ms >= 1000 ? durationLabel(ms) : "";
@@ -364,6 +368,14 @@ function descendantLists(roots: Voice[], byParent: Map<string, Voice[]>): Voice[
 		visit(root);
 		return out;
 	});
+}
+
+function worktreeMark(voice: Voice): { text: string; color: ThemeColor } | undefined {
+	const worktree = voice.worktree;
+	if (!worktree || worktree.status === "discarded") return undefined;
+	if (worktree.status === "merged") return { text: "⎇ merged", color: "success" };
+	const leaf = worktree.branch.replace(/^fugue\//, "");
+	return { text: leaf === voice.name ? "⎇" : `⎇ ${leaf}`, color: "muted" };
 }
 
 /** Themed, width-clamped lines for the node diagram. */

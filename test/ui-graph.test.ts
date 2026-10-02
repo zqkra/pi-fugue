@@ -102,3 +102,13 @@ test("cropWindow keeps the target visible and counts markers", () => {
 	sum += (tight.lo > 0 ? 1 : 0) + (tight.hi < lengths.length - 1 ? 1 : 0);
 	assert.ok(sum <= 9, `window costs ${sum}`);
 });
+
+test("an isolated writer carries the branch mark; a merged one says so", () => {
+	const base = fixture5();
+	const worktree = { repoRoot: "/r", path: "/w/auth", branch: "fugue/auth", base: "abc", status: "active" as const };
+	const voices = base.voices.map((voice) => (voice.runId === "run-auth" ? { ...voice, worktree } : voice));
+	const active = render({ ...base, voices }, 160, 60).map(stripAnsi).join("\n");
+	assert.ok(active.includes("⎇"), active);
+	const merged = voices.map((voice) => (voice.worktree ? { ...voice, worktree: { ...voice.worktree, status: "merged" as const } } : voice));
+	assert.ok(render({ ...base, voices: merged }, 160, 60).map(stripAnsi).join("\n").includes("⎇ merged"));
+});

@@ -224,6 +224,10 @@ export class VoiceView {
 			const detail = voice.activity.detail ? ` · ${voice.activity.detail}` : "";
 			lines.push(clamp(` ${theme.fg("muted", "activity")}  ${theme.fg("text", voice.activity.kind)}${theme.fg("dim", detail)}`));
 		}
+		if (voice.worktree && voice.worktree.status !== "discarded") {
+			const where = voice.worktree.status === "merged" ? theme.fg("success", "merged") : theme.fg("dim", voice.worktree.path);
+			lines.push(clamp(` ${theme.fg("muted", "branch")}  ${theme.fg("text", voice.worktree.branch)}  ${where}`));
+		}
 		if (voice.error) lines.push(...this.wrapSection("error", voice.error, ERROR_LINES, "error"));
 		if (voice.summary && !running) lines.push(...this.wrapSection("summary", voice.summary, SUMMARY_LINES, "text"));
 
