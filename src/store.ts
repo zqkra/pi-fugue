@@ -30,6 +30,7 @@ import {
 	type ConductorInfo,
 	type GateReport,
 	type MessageEdge,
+	type RiffWorktree,
 	type RosterView,
 	type ScoreActions,
 	type ScoreSnapshot,
@@ -66,6 +67,8 @@ export interface VoiceEntry {
 	error?: string;
 	tokens?: TokenUsage;
 	costUsd?: number;
+	/** The riff's own branch and folder, restored on hydrate. */
+	worktree?: RiffWorktree;
 }
 
 export interface VoiceRegistration {
@@ -78,6 +81,7 @@ export interface VoiceRegistration {
 	origin: "fugue" | "subagent";
 	asyncDir?: string;
 	startedAt?: number;
+	worktree?: RiffWorktree;
 }
 
 export interface AsyncStartedPayload {
@@ -131,6 +135,8 @@ export interface StoreOptions {
 	now?: () => number;
 	isProcessAlive?: (pid: number) => boolean;
 	pollMs?: number;
+	/** Called after a voice settles, for worktree housekeeping. Never allowed to break the roster. */
+	onSettled?: (voice: Voice) => void;
 }
 
 interface VoiceRecord {
@@ -225,6 +231,16 @@ export class Store implements RosterView, ScoreActions {
 		this.publish();
 	}
 
+	/** Mark the riff's worktree merged or discarded; persisted so hydrate restores it. */
+	setWorktreeStatus(runId: string, status: RiffWorktree["status"]): void {
+		const record = this.voices.get(runId);
+		const worktree = record?.voice.worktree;
+		if (!record || !worktree || worktree.status === status) return;
+		record.voice = { ...record.voice, worktree: { ...worktree, status } };
+		this.persist(record.voice);
+		this.publish();
+	}
+
 	/** Rebuild the roster from `fugue.voice` entries (latest per runId, oldest first). */
 	hydrate(entries: readonly VoiceEntry[]): void {
 		const latest = new Map<string, VoiceEntry>();
@@ -253,6 +269,7 @@ export class Store implements RosterView, ScoreActions {
 					...(entry.error ? { error: entry.error } : {}),
 					...(entry.tokens ? { tokens: entry.tokens } : {}),
 					...(entry.costUsd !== undefined ? { costUsd: entry.costUsd } : {}),
+					...(entry.worktree ? { worktree: entry.worktree } : {}),
 				},
 				provisional: false,
 				settledFromEvent: TERMINAL_STATES.has(state),
@@ -286,6 +303,7 @@ export class Store implements RosterView, ScoreActions {
 			...(registration.model ? { model: registration.model } : {}),
 			...(registration.task ? { task: truncate(registration.task, MAX_TASK_CHARS) } : {}),
 			...(registration.startedAt !== undefined ? { startedAt: registration.startedAt } : {}),
+			...(registration.worktree ? { worktree: registration.worktree } : {}),
 		};
 		this.voices.set(registration.runId, {
 			voice,
@@ -542,6 +560,11 @@ export class Store implements RosterView, ScoreActions {
 		record.settledFromEvent = true;
 		record.voice = { ...record.voice, ...patch };
 		this.persist(record.voice);
+		try {
+			this.options.onSettled?.(record.voice);
+		} catch {
+			// Housekeeping must never break a settle.
+		}
 	}
 
 	private adoptRevival(record: VoiceRecord, info: ResumeDetails | undefined): void {
@@ -599,6 +622,7 @@ export class Store implements RosterView, ScoreActions {
 			...(voice.error ? { error: voice.error } : {}),
 			...(voice.tokens ? { tokens: voice.tokens } : {}),
 			...(voice.costUsd !== undefined ? { costUsd: voice.costUsd } : {}),
+			...(voice.worktree ? { worktree: voice.worktree } : {}),
 		});
 	}
 

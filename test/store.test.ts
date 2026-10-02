@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store, type BridgeLike, type VoiceEntry } from "../src/store.ts";
 import type { StatusFile } from "../src/status-files.ts";
-import type { GateReport } from "../src/types.ts";
+import type { GateReport, RiffWorktree, Voice } from "../src/types.ts";
 
 const NOW = 1_000_000;
 
@@ -339,4 +339,69 @@ test("a refresh that finishes after dispose starts no timer and persists nothing
 	await new Promise((resolve) => setImmediate(resolve));
 	assert.equal(store.polling(), false);
 	assert.equal(persisted.length, before);
+});
+
+test("worktrees persist with the voice entry and hydrate restores them", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const worktree: RiffWorktree = { repoRoot: "/repo", path: "/wt/auth", branch: "fugue/auth", base: "abc123", status: "active" };
+		const { store, persisted } = makeStore(root);
+		store.registerVoice({ runId: "run-1", name: "auth", role: "worker", origin: "fugue", worktree });
+		assert.deepEqual(store.voice("run-1")?.worktree, worktree);
+		assert.deepEqual(persisted.at(-1)?.worktree, worktree);
+		store.dispose();
+
+		const { store: revived } = makeStore(root);
+		revived.hydrate(persisted);
+		assert.deepEqual(revived.voice("run-1")?.worktree, worktree);
+		revived.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("settling calls the worktree hook with the final voice and survives a throwing hook", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const worktree: RiffWorktree = { repoRoot: "/repo", path: "/wt/auth", branch: "fugue/auth", base: "abc123", status: "active" };
+		const settled: Voice[] = [];
+		const { store } = makeStore(root, {
+			onSettled: (voice) => {
+				settled.push(voice);
+				if (settled.length === 2) throw new Error("hook boom");
+			},
+		});
+		store.registerVoice({ runId: "run-1", name: "auth", role: "worker", origin: "fugue", worktree });
+		assert.equal(settled.length, 0);
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW });
+		assert.equal(settled.length, 1);
+		assert.equal(settled[0].state, "done");
+		assert.deepEqual(settled[0].worktree, worktree);
+		// A second settle still lands even though the hook throws.
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW + 1 });
+		assert.equal(settled.length, 2);
+		assert.equal(store.voice("run-1")?.state, "done");
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("setWorktreeStatus marks merged/discarded, persists, and ignores unknown runs", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const worktree: RiffWorktree = { repoRoot: "/repo", path: "/wt/auth", branch: "fugue/auth", base: "abc123", status: "active" };
+		const { store, persisted } = makeStore(root);
+		store.registerVoice({ runId: "run-1", name: "auth", role: "worker", origin: "fugue", worktree });
+		store.setWorktreeStatus("run-1", "merged");
+		assert.equal(store.voice("run-1")?.worktree?.status, "merged");
+		assert.equal(persisted.at(-1)?.worktree?.status, "merged");
+		store.setWorktreeStatus("run-1", "merged");
+		assert.equal(store.snapshot().version > 0, true);
+		store.setWorktreeStatus("missing", "discarded");
+		assert.equal(store.voice("missing"), undefined);
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
