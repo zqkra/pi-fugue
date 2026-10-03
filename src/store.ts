@@ -173,6 +173,8 @@ export class Store implements RosterView, ScoreActions {
 	private timer: ReturnType<typeof setInterval> | undefined;
 	private refreshing: Promise<void> | undefined;
 	private disposed = false;
+	/** Signature of the last `fugue.voice` entry written per run. */
+	private readonly persisted = new Map<string, string>();
 
 	private readonly now: () => number;
 	private readonly isProcessAlive: (pid: number) => boolean;
@@ -249,6 +251,7 @@ export class Store implements RosterView, ScoreActions {
 				latest.set(entry.runId, entry);
 			}
 		}
+		for (const entry of latest.values()) this.persisted.set(entry.runId, entrySignature(entry));
 		for (const entry of latest.values()) {
 			if (this.voices.has(entry.runId)) continue;
 			const state = entry.state ?? "queued";
@@ -587,9 +590,12 @@ export class Store implements RosterView, ScoreActions {
 
 	/** Move a voice to a terminal state and persist it for reboot recovery. */
 	private settle(record: VoiceRecord, patch: Partial<Voice>): void {
+		const wasTerminal = TERMINAL_STATES.has(record.voice.state);
 		record.settledFromEvent = true;
 		record.voice = { ...record.voice, ...patch };
 		this.persist(record.voice);
+		// Settle housekeeping (committing worktree leftovers) runs once, on the first settle.
+		if (wasTerminal) return;
 		try {
 			this.options.onSettled?.(record.voice);
 		} catch {
@@ -637,7 +643,7 @@ export class Store implements RosterView, ScoreActions {
 
 	private persist(voice: Voice): void {
 		if (this.disposed) return;
-		this.options.persist?.({
+		const entry: VoiceEntry = {
 			runId: voice.runId,
 			name: voice.name,
 			role: voice.role,
@@ -653,7 +659,13 @@ export class Store implements RosterView, ScoreActions {
 			...(voice.tokens ? { tokens: voice.tokens } : {}),
 			...(voice.costUsd !== undefined ? { costUsd: voice.costUsd } : {}),
 			...(voice.worktree ? { worktree: voice.worktree } : {}),
-		});
+		};
+		// pi-subagents replays completions (reloads, resumes); only append an entry when
+		// something worth keeping changed, or the session grows with duplicates.
+		const signature = entrySignature(entry);
+		if (this.persisted.get(entry.runId) === signature) return;
+		this.persisted.set(entry.runId, signature);
+		this.options.persist?.(entry);
 	}
 
 	private ensurePolling(): void {
@@ -708,4 +720,20 @@ function processAlive(pid: number): boolean {
 	} catch (error) {
 		return (error as NodeJS.ErrnoException).code !== "ESRCH";
 	}
+}
+
+/** What makes a `fugue.voice` entry worth writing again; token counts alone are not. */
+function entrySignature(entry: VoiceEntry): string {
+	return JSON.stringify([
+		entry.name,
+		entry.role,
+		entry.parent,
+		entry.model,
+		entry.state,
+		entry.endedAt,
+		entry.summary,
+		entry.error,
+		entry.worktree?.status,
+		entry.worktree?.branch,
+	]);
 }

@@ -474,27 +474,43 @@ test("worktrees persist with the voice entry and hydrate restores them", async (
 	}
 });
 
-test("settling calls the worktree hook with the final voice and survives a throwing hook", async () => {
+test("settling calls the worktree hook once, survives a throwing hook, and replays write nothing", async () => {
 	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
 	try {
 		const worktree: RiffWorktree = { repoRoot: "/repo", path: "/wt/auth", branch: "fugue/auth", base: "abc123", status: "active" };
 		const settled: Voice[] = [];
-		const { store } = makeStore(root, {
+		const { store, persisted } = makeStore(root, {
 			onSettled: (voice) => {
 				settled.push(voice);
-				if (settled.length === 2) throw new Error("hook boom");
+				throw new Error("hook boom");
 			},
 		});
 		store.registerVoice({ runId: "run-1", name: "auth", role: "worker", origin: "fugue", worktree });
-		assert.equal(settled.length, 0);
+		const afterRegister = persisted.length;
 		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW });
 		assert.equal(settled.length, 1);
 		assert.equal(settled[0].state, "done");
 		assert.deepEqual(settled[0].worktree, worktree);
-		// A second settle still lands even though the hook throws.
-		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW + 1 });
-		assert.equal(settled.length, 2);
-		assert.equal(store.voice("run-1")?.state, "done");
+		assert.equal(store.voice("run-1")?.state, "done", "the settle lands even though the hook throws");
+		assert.equal(persisted.length, afterRegister + 1);
+		// pi-subagents replays the same completion on reload: no second hook, no duplicate entry.
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW });
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW });
+		assert.equal(settled.length, 1);
+		assert.equal(persisted.length, afterRegister + 1);
+		store.dispose();
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("hydrated runs are not written again unless something changed", async () => {
+	const root = await mkdtemp(join(tmpdir(), "fugue-store-"));
+	try {
+		const { store, persisted } = makeStore(root);
+		store.hydrate([{ runId: "run-1", name: "auth", role: "worker", parent: "conductor", origin: "fugue", state: "done", endedAt: NOW }]);
+		store.onAsyncComplete({ runId: "run-1", state: "complete", success: true, timestamp: NOW });
+		assert.equal(persisted.length, 0);
 		store.dispose();
 	} finally {
 		await rm(root, { recursive: true, force: true });
